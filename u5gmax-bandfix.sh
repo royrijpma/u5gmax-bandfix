@@ -339,6 +339,9 @@ action_switch_profile() {
 
     _write_profile_to_config
     printf "\n${G}✓ Profile switched to ${PROFILE_NAME}.${NC}\n"
+    printf "  LTE bands:     ${W}%s${NC}\n" "$LTE_REQUIRED"
+    printf "  NR5G SA bands: ${W}%s${NC}\n" "$NR5G_SA_REQUIRED"
+    printf "  NR5G NSA bands:${W}%s${NC}\n" "$NR5G_NSA_REQUIRED"
     read -r -p "  Run band check now? [Y/n] " _run
     case "${_run:-Y}" in
         [Yy]|"") action_force_check ;;
