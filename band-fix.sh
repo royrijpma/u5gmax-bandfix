@@ -237,12 +237,27 @@ source "$CONFIG"
 : "${SSH_USER:?CONFIG missing SSH_USER}"
 validate_ssh_user "$SSH_USER"
 
-# ISP profile — defaults to Odido NL for backwards compatibility with pre-profile installs
-: "${PROFILE_NAME:=Odido NL}"
-: "${MODEM_MODEL:=UMBBE630}"
-: "${LTE_REQUIRED:=1,3,7,32,38}"
-: "${NR5G_SA_REQUIRED:=1,3,7,38,78}"
-: "${NR5G_NSA_REQUIRED:=1,3,7,38,78}"
+# ISP profile — PROFILE is authoritative. Band lists are always derived here, never
+# trusted from a persisted config value, so a version update propagates new band specs
+# without requiring a manual "switch profile" round-trip.
+: "${PROFILE:=odido}"
+case "$PROFILE" in
+    freemobile)
+        PROFILE_NAME="Free Mobile FR"
+        MODEM_MODEL="UMBBE631"
+        LTE_REQUIRED="1,3,7,8,28"
+        NR5G_SA_REQUIRED="1,28,78"
+        NR5G_NSA_REQUIRED="1,28,78"
+        ;;
+    *)
+        PROFILE="odido"
+        PROFILE_NAME="Odido NL"
+        MODEM_MODEL="UMBBE630"
+        LTE_REQUIRED="1,3,7,32,38"
+        NR5G_SA_REQUIRED="1,3,7,38,78"
+        NR5G_NSA_REQUIRED="1,3,7,38,78"
+        ;;
+esac
 
 # --- Get current U5G-Max IP (cache-first: skip mongo on normal cron runs) ---
 LAST_IP=""

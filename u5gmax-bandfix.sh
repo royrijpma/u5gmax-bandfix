@@ -14,16 +14,34 @@ CRON_FILE="/etc/cron.d/u5gmax-bandfix"
 BAND_FIX="$DATA_DIR/band-fix.sh"
 REBOOT_CRON_FILE="/etc/cron.d/u5gmax-reboot"
 
+# ISP profile — PROFILE is authoritative. Band lists are always derived here, never
+# trusted from a persisted config value, so a version update propagates new band specs
+# without requiring a manual "switch profile" round-trip.
+_resolve_band_profile() {
+    : "${PROFILE:=odido}"
+    case "$PROFILE" in
+        freemobile)
+            PROFILE_NAME="Free Mobile FR"
+            MODEM_MODEL="UMBBE631"
+            LTE_REQUIRED="1,3,7,8,28"
+            NR5G_SA_REQUIRED="1,28,78"
+            NR5G_NSA_REQUIRED="1,28,78"
+            ;;
+        *)
+            PROFILE="odido"
+            PROFILE_NAME="Odido NL"
+            MODEM_MODEL="UMBBE630"
+            LTE_REQUIRED="1,3,7,32,38"
+            NR5G_SA_REQUIRED="1,3,7,38,78"
+            NR5G_NSA_REQUIRED="1,3,7,38,78"
+            ;;
+    esac
+}
+
 # Load config early so MODEM_MODEL and profile vars are available globally
 # shellcheck source=/dev/null
 [ -f "$CONFIG" ] && source "$CONFIG" || true
-
-# ISP profile defaults (backwards compat with pre-profile installs)
-: "${PROFILE_NAME:=Odido NL}"
-: "${MODEM_MODEL:=UMBBE630}"
-: "${LTE_REQUIRED:=1,3,7,32,38}"
-: "${NR5G_SA_REQUIRED:=1,3,7,38,78}"
-: "${NR5G_NSA_REQUIRED:=1,3,7,38,78}"
+_resolve_band_profile
 
 # Colors
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
@@ -99,6 +117,7 @@ load_config() {
     # shellcheck source=/dev/null
     source "$CONFIG"
     : "${SSH_USER:?}"
+    _resolve_band_profile
 }
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -290,14 +309,12 @@ PYEOF
 }
 
 _write_profile_to_config() {
+    # Only PROFILE is persisted — PROFILE_NAME/MODEM_MODEL/band lists are always
+    # re-derived from PROFILE via _resolve_band_profile, so a version update that
+    # changes a profile's band spec applies on the next run without a manual switch.
     {
         grep -v "^PROFILE=\|^PROFILE_NAME=\|^MODEM_MODEL=\|^LTE_REQUIRED=\|^NR5G_SA_REQUIRED=\|^NR5G_NSA_REQUIRED=" "$CONFIG"
-        printf 'PROFILE="%s"\n'          "$PROFILE"
-        printf 'PROFILE_NAME="%s"\n'     "$PROFILE_NAME"
-        printf 'MODEM_MODEL="%s"\n'      "$MODEM_MODEL"
-        printf 'LTE_REQUIRED="%s"\n'     "$LTE_REQUIRED"
-        printf 'NR5G_SA_REQUIRED="%s"\n' "$NR5G_SA_REQUIRED"
-        printf 'NR5G_NSA_REQUIRED="%s"\n' "$NR5G_NSA_REQUIRED"
+        printf 'PROFILE="%s"\n' "$PROFILE"
     } > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
     chmod 600 "$CONFIG"
 }
@@ -313,25 +330,12 @@ action_switch_profile() {
     read -r -p "  Choose: " _PCHOICE
 
     case "${_PCHOICE}" in
-        1)
-            PROFILE="odido"
-            PROFILE_NAME="Odido NL"
-            MODEM_MODEL="UMBBE630"
-            LTE_REQUIRED="1,3,7,32,38"
-            NR5G_SA_REQUIRED="1,3,7,38,78"
-            NR5G_NSA_REQUIRED="1,3,7,38,78"
-            ;;
-        2)
-            PROFILE="freemobile"
-            PROFILE_NAME="Free Mobile FR"
-            MODEM_MODEL="UMBBE631"
-            LTE_REQUIRED="1,3,7,8,28"
-            NR5G_SA_REQUIRED="1,28,78"
-            NR5G_NSA_REQUIRED="1,28,78"
-            ;;
+        1) PROFILE="odido" ;;
+        2) PROFILE="freemobile" ;;
         0) return ;;
         *) printf "${R}Invalid choice.${NC}\n"; pause; return ;;
     esac
+    _resolve_band_profile
 
     _write_profile_to_config
     printf "\n${G}✓ Profile switched to ${PROFILE_NAME}.${NC}\n"
