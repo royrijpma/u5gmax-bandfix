@@ -30,7 +30,7 @@ msg ""
 
 # --- ISP profile selection ---
 msg "Select your ISP profile:"
-printf "  ${BOLD}1)${NC} Odido NL       — LTE B1/3/7/38, NR5G n1/3/7/38/78\n"
+printf "  ${BOLD}1)${NC} Odido NL       — LTE B1/3/7/32/38, NR5G n1/3/7/38/78\n"
 printf "  ${BOLD}2)${NC} Free Mobile FR — LTE B1/3/7/8/28, NR5G n1/28/78\n"
 printf "\n  Choose [1]: "
 read -r _PROFILE_CHOICE
@@ -40,7 +40,7 @@ case "${_PROFILE_CHOICE:-1}" in
         PROFILE="odido"
         PROFILE_NAME="Odido NL"
         MODEM_MODEL="UMBBE630"
-        LTE_REQUIRED="1,3,7,38"
+        LTE_REQUIRED="1,3,7,32,38"
         NR5G_SA_REQUIRED="1,3,7,38,78"
         NR5G_NSA_REQUIRED="1,3,7,38,78"
         ;;

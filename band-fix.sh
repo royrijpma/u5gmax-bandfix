@@ -240,7 +240,7 @@ validate_ssh_user "$SSH_USER"
 # ISP profile — defaults to Odido NL for backwards compatibility with pre-profile installs
 : "${PROFILE_NAME:=Odido NL}"
 : "${MODEM_MODEL:=UMBBE630}"
-: "${LTE_REQUIRED:=1,3,7,38}"
+: "${LTE_REQUIRED:=1,3,7,32,38}"
 : "${NR5G_SA_REQUIRED:=1,3,7,38,78}"
 : "${NR5G_NSA_REQUIRED:=1,3,7,38,78}"
 

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -21,7 +21,7 @@ REBOOT_CRON_FILE="/etc/cron.d/u5gmax-reboot"
 # ISP profile defaults (backwards compat with pre-profile installs)
 : "${PROFILE_NAME:=Odido NL}"
 : "${MODEM_MODEL:=UMBBE630}"
-: "${LTE_REQUIRED:=1,3,7,38}"
+: "${LTE_REQUIRED:=1,3,7,32,38}"
 : "${NR5G_SA_REQUIRED:=1,3,7,38,78}"
 : "${NR5G_NSA_REQUIRED:=1,3,7,38,78}"
 
@@ -306,7 +306,7 @@ action_switch_profile() {
     load_config
 
     printf "\n${Y}Switch ISP profile${NC}\n\n"
-    printf "  ${W}1)${NC} Odido NL       — LTE B1/3/7/38,    NR5G n1/3/7/38/78\n"
+    printf "  ${W}1)${NC} Odido NL       — LTE B1/3/7/32/38, NR5G n1/3/7/38/78\n"
     printf "  ${W}2)${NC} Free Mobile FR — LTE B1/3/7/8/28,  NR5G n1/28/78\n"
     printf "  ${W}0)${NC} Cancel\n"
     printf "\n  Current: ${W}${PROFILE_NAME}${NC}\n\n"
@@ -317,7 +317,7 @@ action_switch_profile() {
             PROFILE="odido"
             PROFILE_NAME="Odido NL"
             MODEM_MODEL="UMBBE630"
-            LTE_REQUIRED="1,3,7,38"
+            LTE_REQUIRED="1,3,7,32,38"
             NR5G_SA_REQUIRED="1,3,7,38,78"
             NR5G_NSA_REQUIRED="1,3,7,38,78"
             ;;

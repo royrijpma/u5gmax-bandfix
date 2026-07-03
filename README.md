@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.3.1 (2026-07-03)
+- **Odido NL profile: added LTE Band 32** (SDL, 1500 MHz carrier aggregation layer). `LTE_REQUIRED` is now `1,3,7,32,38`. No NR5G equivalent is required — `NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` remain `1,3,7,38,78`.
+
 ### v1.3.0 (2026-07-01)
 - **Scheduled one-time or daily modem reboot** (menu option 8): schedule the U5G-Max to reboot at a specific time, once or every 24h. After the reboot, band-fix runs automatically. See [Scheduling a Modem Reboot](#scheduling-a-modem-reboot) for why this is useful.
 
@@ -59,10 +62,13 @@ ISPs that offer FWA (Fixed Wireless Access) over 5G publish a hardware specifica
 |-------|----------------------|-----------------|
 | LTE (FDD) | B1, B3, B7 | B8, B20, B28 |
 | LTE (TDD) | B38 | — |
+| LTE (SDL) | B32 | — |
 | NR5G SA/NSA (FDD) | n1, n3, n7 | n8, n20, n28 |
 | NR5G SA/NSA (TDD) | n38, n78 | — |
 
 *Source: [Odido 5G Internet hardware specificaties en voorwaarden](https://assets.odido.nl/x/f4aba6813e/5g-internet-hardware-specificaties-voorwaarden.pdf) (3GPP Release 16)*
+
+> **Note (v1.3.1):** B32 (Supplemental Downlink, LTE carrier aggregation only) was added to the enforced LTE band set — confirmed usable on Odido NL as of 2026-07-03. It is not listed in the hardware-spec PDF above; verify against your own account/modem if you rely on this. No NR5G equivalent is enforced for B32.
 
 ### Free Mobile FR
 
@@ -249,7 +255,7 @@ printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$ICCID" \
 Expected output (Odido NL-compliant):
 
 ```json
-{"result":{"net_sel_pref":"automatic","mode":"5gnr,lte","lte_band":"1,3,7,38","nr5g_sa_band":"1,3,7,38,78","nr5g_nsa_band":"1,3,7,38,78"}}
+{"result":{"net_sel_pref":"automatic","mode":"5gnr,lte","lte_band":"1,3,7,32,38","nr5g_sa_band":"1,3,7,38,78","nr5g_nsa_band":"1,3,7,38,78"}}
 ```
 
 ## Uninstall
