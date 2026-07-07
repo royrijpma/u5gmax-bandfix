@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.3.2 (2026-07-07)
+- **Live serving band & signal in the CLI header**: a new `Signal:` line shows the modem's actual current LTE/NR5G band(s) and signal quality (e.g. `5G n78+n1, LTE B3 · 85% (Good)`), sourced from `get-radio-status` (fields previously unused: `mode`, `ca-lte`, `ca-nr`, `signal-percent`, `signal`). This is the band the modem is actually camping on right now, as distinct from the *allowed* band list shown by "Show current band status". Fetched once when the interactive menu starts (not on every redraw) to avoid adding cellular-link latency to every keypress.
+
 ### v1.3.1 (2026-07-03)
 - **Odido NL profile: added LTE Band 32** (SDL, 1500 MHz carrier aggregation layer). `LTE_REQUIRED` is now `1,3,7,32,38`. No NR5G equivalent is required — `NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` remain `1,3,7,38,78`.
 

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.1"
+VERSION="1.3.2"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -121,6 +121,62 @@ load_config() {
 }
 
 # ── Header ────────────────────────────────────────────────────────────────────
+
+# ── Serving band / signal — fetched once at CLI startup, cached for the
+# session (print_header runs on every menu redraw; a live SSH call there
+# would make every keypress depend on modem/cellular latency).
+SIGNAL_SUMMARY="—"
+
+refresh_signal_summary() {
+    local ip raw
+    ip=$(get_ip)
+    if [ -z "$ip" ] || [ "$ip" = "null" ]; then
+        SIGNAL_SUMMARY="${R}modem offline${NC}"
+        return
+    fi
+    raw=$(printf '{"method":"get-radio-status"}' | timeout 8 ssh \
+        -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+        "${SSH_USER}@${ip}" uiwwand-ctl 2>/dev/null) || true
+    if [ -z "$raw" ]; then
+        SIGNAL_SUMMARY="${Y}unavailable${NC}"
+        return
+    fi
+    SIGNAL_SUMMARY=$(printf '%s' "$raw" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)["result"]
+except Exception:
+    print("unavailable")
+    sys.exit()
+mode = d.get("mode", "?")
+nr, lte = [], []
+for c in d.get("ca-nr") or []:
+    b = "n" + str(c["band"])
+    if b not in nr:
+        nr.append(b)
+for c in d.get("ca-lte") or []:
+    b = "B" + str(c["band"])
+    if b not in lte:
+        lte.append(b)
+pct = d.get("signal-percent")
+desc = (d.get("signal", "") or "").split(" signal")[0]
+parts = []
+if nr:
+    parts.append(mode + " " + "+".join(nr))
+if lte:
+    parts.append("LTE " + "+".join(lte))
+if not parts and mode != "?":
+    parts.append(mode)
+if not parts and pct is None:
+    print("unavailable")
+else:
+    suffix = " · " + str(pct) + "% (" + desc + ")" if pct is not None else ""
+    print(", ".join(parts) + suffix)
+' 2>/dev/null) || true
+    [ -z "$SIGNAL_SUMMARY" ] && SIGNAL_SUMMARY="${Y}unavailable${NC}"
+}
+
 print_header() {
     local u5g_ip cron last_run result reboot_status
     u5g_ip=$(get_ip)
@@ -141,6 +197,7 @@ print_header() {
     printf "  ${W}Cron:${NC}        %s\n" "$cron"
     printf "  ${W}Last run:${NC}    %s\n" "$last_run"
     printf "  ${W}Result:${NC}      %s\n" "$result"
+    printf "  ${W}Signal:${NC}      %s\n" "$SIGNAL_SUMMARY"
     printf "  ${W}Reboot:${NC}      %s\n" "$reboot_status"
     printf "${C}"
     printf '╠══════════════════════════════════════════════╣\n'
@@ -580,7 +637,9 @@ if [ $# -gt 0 ]; then
     exit 0
 fi
 
-# Interactive menu
+# Interactive menu — fetch fresh signal/band data once at startup (cached
+# for the rest of the session, see refresh_signal_summary comment above).
+refresh_signal_summary
 while true; do
     print_header
     print_menu
