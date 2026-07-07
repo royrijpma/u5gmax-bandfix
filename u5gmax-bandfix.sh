@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.2"
+VERSION="1.3.3"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -174,7 +174,9 @@ else:
     suffix = " · " + str(pct) + "% (" + desc + ")" if pct is not None else ""
     print(", ".join(parts) + suffix)
 ' 2>/dev/null) || true
-    [ -z "$SIGNAL_SUMMARY" ] && SIGNAL_SUMMARY="${Y}unavailable${NC}"
+    if [ -z "$SIGNAL_SUMMARY" ]; then
+        SIGNAL_SUMMARY="${Y}unavailable${NC}"
+    fi
 }
 
 print_header() {

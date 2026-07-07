@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.3.3 (2026-07-07)
+- **Fix: interactive menu silently failed to start** (regression from v1.3.2). `refresh_signal_summary()`'s last statement was a bare `[ -z "$SIGNAL_SUMMARY" ] && SIGNAL_SUMMARY="..."` — under `set -e`, when the test was false (i.e. the fetch actually succeeded), that became the function's exit status, and a bare function call returning non-zero at the top level terminates the whole script. Replaced with a proper `if`/`fi` block, which always returns 0 regardless of which branch runs. Confirmed via `bash -x` trace on the actual UCG Fiber gateway: the live fetch worked correctly, the script just exited right after on that one line.
+
 ### v1.3.2 (2026-07-07)
 - **Live serving band & signal in the CLI header**: a new `Signal:` line shows the modem's actual current LTE/NR5G band(s) and signal quality (e.g. `5G n78+n1, LTE B3 · 85% (Good)`), sourced from `get-radio-status` (fields previously unused: `mode`, `ca-lte`, `ca-nr`, `signal-percent`, `signal`). This is the band the modem is actually camping on right now, as distinct from the *allowed* band list shown by "Show current band status". Fetched once when the interactive menu starts (not on every redraw) to avoid adding cellular-link latency to every keypress.
 
