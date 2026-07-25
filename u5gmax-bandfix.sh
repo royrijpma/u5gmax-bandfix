@@ -249,7 +249,7 @@ print_header() {
     printf "${C}"
     printf '╔══════════════════════════════════════════════╗\n'
     printf '║            u5gmax-bandfix  v%-5s            ║\n' "$VERSION"
-    printf '║   %-42s ║\n' "${PROFILE_NAME} — UniFi U5G-Max"
+    printf '║   %-42s ║\n' "${PROFILE_NAME} - UniFi U5G-Max"
     printf '╠══════════════════════════════════════════════╣\n'
     printf "${NC}"
     printf "  ${W}U5G-Max IP:${NC}  ${u5g_ip}\n"
