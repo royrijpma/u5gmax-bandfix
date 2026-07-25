@@ -1,5 +1,5 @@
 #!/bin/bash
-# reboot-modem.sh — scheduled one-time or daily U5G-Max reboot
+# reboot-modem.sh — scheduled one-time, daily, or weekly U5G-Max reboot
 # Called by /etc/cron.d/u5gmax-reboot
 
 set -euo pipefail
@@ -35,7 +35,7 @@ if [ "$REBOOT_SCHEDULE" = "once" ]; then
     grep -v '^REBOOT_' "$CONFIG" > "$TMP_DIR/reboot-config.tmp" && mv "$TMP_DIR/reboot-config.tmp" "$CONFIG"
     log "One-time schedule executed — cron entry removed"
 else
-    log "Daily schedule — keeping cron entry"
+    log "Recurring ($REBOOT_SCHEDULE) schedule — keeping cron entry"
 fi
 
 # --- Get modem IP ---

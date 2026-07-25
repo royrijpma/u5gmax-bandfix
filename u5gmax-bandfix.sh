@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.3"
+VERSION="1.4.0"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -97,12 +97,69 @@ cron_status() {
     fi
 }
 
+# Parse a comma-separated day list (1=Monday .. 7=Sunday, as shown in the menu) into
+# cron's own dow numbering (0=Sunday, 1=Monday .. 6=Saturday). Echoes the result in
+# Mon..Sun order; returns 1 if the input contains no valid day.
+_parse_weekdays() {
+    local _norm _tok _toks
+    local _mon=0 _tue=0 _wed=0 _thu=0 _fri=0 _sat=0 _sun=0
+    _norm=$(printf '%s' "$1" | tr -d '[:space:]')
+    IFS=',' read -ra _toks <<< "$_norm"
+    for _tok in "${_toks[@]}"; do
+        case "$_tok" in
+            1) _mon=1 ;;
+            2) _tue=1 ;;
+            3) _wed=1 ;;
+            4) _thu=1 ;;
+            5) _fri=1 ;;
+            6) _sat=1 ;;
+            7) _sun=1 ;;
+            "") ;;
+            *) return 1 ;;
+        esac
+    done
+    local _out=""
+    [ "$_mon" = 1 ] && _out="${_out:+$_out,}1"
+    [ "$_tue" = 1 ] && _out="${_out:+$_out,}2"
+    [ "$_wed" = 1 ] && _out="${_out:+$_out,}3"
+    [ "$_thu" = 1 ] && _out="${_out:+$_out,}4"
+    [ "$_fri" = 1 ] && _out="${_out:+$_out,}5"
+    [ "$_sat" = 1 ] && _out="${_out:+$_out,}6"
+    [ "$_sun" = 1 ] && _out="${_out:+$_out,}0"
+    [ -z "$_out" ] && return 1
+    printf '%s' "$_out"
+}
+
+# Render a cron dow csv (0=Sunday..6=Saturday) as human-readable "Mon,Wed,Fri" (Mon..Sun order).
+_weekday_label() {
+    local _tok _toks
+    local _mon=0 _tue=0 _wed=0 _thu=0 _fri=0 _sat=0 _sun=0
+    IFS=',' read -ra _toks <<< "${1:-}"
+    for _tok in "${_toks[@]}"; do
+        case "$_tok" in
+            1) _mon=1 ;; 2) _tue=1 ;; 3) _wed=1 ;; 4) _thu=1 ;;
+            5) _fri=1 ;; 6) _sat=1 ;; 0) _sun=1 ;;
+        esac
+    done
+    local _out=""
+    [ "$_mon" = 1 ] && _out="${_out:+$_out,}Mon"
+    [ "$_tue" = 1 ] && _out="${_out:+$_out,}Tue"
+    [ "$_wed" = 1 ] && _out="${_out:+$_out,}Wed"
+    [ "$_thu" = 1 ] && _out="${_out:+$_out,}Thu"
+    [ "$_fri" = 1 ] && _out="${_out:+$_out,}Fri"
+    [ "$_sat" = 1 ] && _out="${_out:+$_out,}Sat"
+    [ "$_sun" = 1 ] && _out="${_out:+$_out,}Sun"
+    printf '%s' "$_out"
+}
+
 get_reboot_status() {
     source "$CONFIG" 2>/dev/null || true
     local _rtime="${REBOOT_TIME:-}"
     local _rsched="${REBOOT_SCHEDULE:-}"
     if [ -z "$_rtime" ]; then
         printf "not scheduled"
+    elif [ "$_rsched" = "weekly" ]; then
+        printf "${Y}⚠ scheduled weekly %s %s (%s)" "$(_weekday_label "${REBOOT_DAYS:-}")" "$_rtime" "$(date +%Z)"
     else
         printf "${Y}⚠ scheduled %s %s (%s)" "$_rsched" "$_rtime" "$(date +%Z)"
     fi
@@ -215,7 +272,7 @@ print_menu() {
     printf "  ${W}5)${NC} Reinstall SSH key on U5G-Max\n"
     printf "  ${W}6)${NC} Update to latest version\n"
     printf "  ${W}7)${NC} Uninstall\n"
-    printf "  ${W}8)${NC} Schedule one-time reboot\n"
+    printf "  ${W}8)${NC} Schedule reboot (once / daily / weekly)\n"
     printf "  ${W}0)${NC} Exit\n"
     printf "${C}"
     printf '╚══════════════════════════════════════════════╝\n'
@@ -457,22 +514,24 @@ action_reinstall_key() {
 
 action_schedule_reboot() {
     load_config
-    
+
     # Re-source config to get current reboot settings
     source "$CONFIG" 2>/dev/null || true
     local _rtime=""
     local _rsched=""
-    
+    local _rdays=""
+    local _sub=""
+
     # If already scheduled, show management submenu
     if [ -n "${REBOOT_TIME:-}" ] && [ -f "$REBOOT_CRON_FILE" ]; then
-        printf "\nScheduled: %s %s (UTC)\n\n" "$REBOOT_SCHEDULE" "$REBOOT_TIME"
+        if [ "${REBOOT_SCHEDULE:-}" = "weekly" ]; then
+            printf "\nScheduled: weekly %s %s (UTC)\n\n" "$(_weekday_label "${REBOOT_DAYS:-}")" "$REBOOT_TIME"
+        else
+            printf "\nScheduled: %s %s (UTC)\n\n" "$REBOOT_SCHEDULE" "$REBOOT_TIME"
+        fi
         printf "  1) Cancel scheduled reboot\n"
         printf "  2) Change time\n"
-        if [ "${REBOOT_SCHEDULE:-}" = "once" ]; then
-            printf "  3) Change to daily\n"
-        else
-            printf "  3) Change to once\n"
-        fi
+        printf "  3) Change schedule type\n"
         printf "  0) Back\n"
         printf "\n  Choose: "
         read -r _sub
@@ -483,32 +542,53 @@ action_schedule_reboot() {
                 printf "\n✓ Scheduled reboot cancelled.\n"
                 pause; return ;;
             2)
-                _rtime="$REBOOT_TIME" ;;  # fall through to schedule new time below
+                # Keep schedule type (and days, if weekly) — only the time changes below
+                _rsched="${REBOOT_SCHEDULE:-once}"
+                _rdays="${REBOOT_DAYS:-}"
+                ;;
             3)
-                if [ "${REBOOT_SCHEDULE:-}" = "once" ]; then _rsched="daily"; else _rsched="once"; fi
-                _rtime="$REBOOT_TIME" ;;  # keep time, change type — fall through to write
+                _rtime="$REBOOT_TIME" ;;  # keep old time as default — fall through to type selection below
             0) return ;;
             *) printf "\nInvalid choice.\n"; pause; return ;;
         esac
     fi
-    
-    # Choose schedule type (only if not changing type from submenu)
-    if [ -z "${_rsched:-}" ] || [ "${_sub:-}" != "3" ]; then
+
+    # Choose schedule type (skipped when only changing the time)
+    if [ "${_sub:-}" != "2" ]; then
         printf "\n  Schedule type:\n"
         printf "  1) Once       — reboot one time, then remove schedule\n"
         printf "  2) Daily      — reboot every 24h at this time\n"
+        printf "  3) Weekly     — reboot on chosen day(s) every week at this time\n"
         printf "  0) Cancel\n"
         printf "\n  Choose: "
         read -r _tchoice
         case "${_tchoice}" in
             1) _rsched="once" ;;
             2) _rsched="daily" ;;
+            3) _rsched="weekly" ;;
             0) return ;;
             *) printf "\nInvalid choice.\n"; pause; return ;;
         esac
     fi
-    
-    # Enter time (if not already set from type-change)
+
+    # Weekly: pick day(s) — re-prompted whenever the type is (re)selected via the
+    # "Change schedule type" flow (so that flow doubles as "change day(s)"), but not
+    # when the submenu's "Change time" option only touches the time.
+    if [ "$_rsched" = "weekly" ] && [ "${_sub:-}" != "2" ]; then
+        printf "\n  Select day(s), comma-separated (e.g. 1,3,5):\n"
+        printf "    1) Monday\n    2) Tuesday\n    3) Wednesday\n    4) Thursday\n"
+        printf "    5) Friday\n    6) Saturday\n    7) Sunday\n"
+        printf "\n  Days: "
+        read -r _dinput
+        if ! _rdays=$(_parse_weekdays "$_dinput"); then
+            printf "\nInvalid day selection. Use numbers 1-7, comma-separated.\n"
+            pause; return
+        fi
+    elif [ "$_rsched" != "weekly" ]; then
+        _rdays=""
+    fi
+
+    # Enter time (if not already set from type/time-change)
     if [ -z "${_rtime:-}" ]; then
         _now_disp="$(date +"%H:%M %Z")"
         printf "\n  System time now: %s\n" "$_now_disp"
@@ -521,18 +601,19 @@ action_schedule_reboot() {
             pause; return
         fi
     fi
-    
-    # Write REBOOT_TIME and REBOOT_SCHEDULE to config
+
+    # Write REBOOT_TIME, REBOOT_SCHEDULE and (if weekly) REBOOT_DAYS to config
     local _h _m
     _h=$(printf "%s" "$_rtime" | cut -d: -f1)
     _m=$(printf "%s" "$_rtime" | cut -d: -f2)
-    
+
     grep -v "^REBOOT_" "$CONFIG" > "$CONFIG.tmp"
     printf 'REBOOT_TIME="%s"\n' "$_rtime" >> "$CONFIG.tmp"
     printf 'REBOOT_SCHEDULE="%s"\n' "$_rsched" >> "$CONFIG.tmp"
+    [ "$_rsched" = "weekly" ] && printf 'REBOOT_DAYS="%s"\n' "$_rdays" >> "$CONFIG.tmp"
     mv "$CONFIG.tmp" "$CONFIG"
     chmod 600 "$CONFIG"
-    
+
     # Write cron entry
     if [ "$_rsched" = "once" ]; then
         # Determine today or tomorrow
@@ -550,6 +631,9 @@ action_schedule_reboot() {
         fi
         printf "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n%s %s %s %s * root /data/u5gmax-bandfix/reboot-modem.sh >> /data/u5gmax-bandfix/band-fix.log 2>&1\n" "$_m" "$_h" "$_today_d" "$_today_m" > "$REBOOT_CRON_FILE"
         printf "\n✓ Reboot scheduled: %s %s (%s) — once\n" "$_label" "$_rtime" "$(date +%Z)"
+    elif [ "$_rsched" = "weekly" ]; then
+        printf "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n%s %s * * %s root /data/u5gmax-bandfix/reboot-modem.sh >> /data/u5gmax-bandfix/band-fix.log 2>&1\n" "$_m" "$_h" "$_rdays" > "$REBOOT_CRON_FILE"
+        printf "\n✓ Reboot scheduled: weekly %s %s (%s)\n" "$(_weekday_label "$_rdays")" "$_rtime" "$(date +%Z)"
     else
         printf "SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n%s %s * * * root /data/u5gmax-bandfix/reboot-modem.sh >> /data/u5gmax-bandfix/band-fix.log 2>&1\n" "$_m" "$_h" > "$REBOOT_CRON_FILE"
         printf "\n✓ Reboot scheduled: daily %s (%s)\n" "$_rtime" "$(date +%Z)"

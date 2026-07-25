@@ -39,11 +39,12 @@ fi
 REBOOT_CRON_FILE="/etc/cron.d/u5gmax-reboot"
 CONFIG_FILE="/data/u5gmax-bandfix/config"
 if [ ! -f "$REBOOT_CRON_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-    _rtime="" _rsched=""
+    _rtime="" _rsched="" _rdays=""
     # shellcheck source=/dev/null
     . "$CONFIG_FILE" 2>/dev/null || true
     _rtime="${REBOOT_TIME:-}"
     _rsched="${REBOOT_SCHEDULE:-}"
+    _rdays="${REBOOT_DAYS:-}"
     if [ -n "$_rtime" ] && [ -n "$_rsched" ]; then
         _h=$(printf '%s' "$_rtime" | cut -d: -f1)
         _m=$(printf '%s' "$_rtime" | cut -d: -f2)
@@ -52,6 +53,11 @@ if [ ! -f "$REBOOT_CRON_FILE" ] && [ -f "$CONFIG_FILE" ]; then
                 "$_m" "$_h" > "$REBOOT_CRON_FILE"
             chmod 644 "$REBOOT_CRON_FILE"
             log "Reboot schedule restored: daily $_rtime (UTC)"
+        elif [ "$_rsched" = "weekly" ] && [ -n "$_rdays" ]; then
+            printf 'SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n%s %s * * %s root /data/u5gmax-bandfix/reboot-modem.sh >> /data/u5gmax-bandfix/band-fix.log 2>&1\n' \
+                "$_m" "$_h" "$_rdays" > "$REBOOT_CRON_FILE"
+            chmod 644 "$REBOOT_CRON_FILE"
+            log "Reboot schedule restored: weekly ($_rdays) $_rtime (UTC)"
         fi
         # one-time schedules are not restored on boot — the scheduled time has likely passed
     fi

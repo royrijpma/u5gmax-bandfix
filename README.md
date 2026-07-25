@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.4.0 (2026-07-25)
+- **Weekly reboot schedule** (menu option 8, third schedule type): reboot the U5G-Max on chosen day(s) of the week at a specific time, instead of only once or every 24h. Useful when the ISP's daily IP-renewal time drifts over time (e.g. Odido NL creeping ~10 minutes later per day) — a weekly reboot on a low-traffic day resets the renewal cycle without needing a reboot every single night. Day selection is comma-separated (e.g. `1,3,5` for Monday/Wednesday/Friday); restored automatically on boot like the daily schedule.
+
 ### v1.3.3 (2026-07-07)
 - **Fix: interactive menu silently failed to start** (regression from v1.3.2). `refresh_signal_summary()`'s last statement was a bare `[ -z "$SIGNAL_SUMMARY" ] && SIGNAL_SUMMARY="..."` — under `set -e`, when the test was false (i.e. the fetch actually succeeded), that became the function's exit status, and a bare function call returning non-zero at the top level terminates the whole script. Replaced with a proper `if`/`fi` block, which always returns 0 regardless of which branch runs. Confirmed via `bash -x` trace on the actual UCG Fiber gateway: the live fetch worked correctly, the script just exited right after on that one line.
 
@@ -22,7 +25,7 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 - **Odido NL profile: added LTE Band 32** (SDL, 1500 MHz carrier aggregation layer). `LTE_REQUIRED` is now `1,3,7,32,38`. No NR5G equivalent is required — `NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` remain `1,3,7,38,78`.
 
 ### v1.3.0 (2026-07-01)
-- **Scheduled one-time or daily modem reboot** (menu option 8): schedule the U5G-Max to reboot at a specific time, once or every 24h. After the reboot, band-fix runs automatically. See [Scheduling a Modem Reboot](#scheduling-a-modem-reboot) for why this is useful.
+- **Scheduled modem reboot** (menu option 8): schedule the U5G-Max to reboot at a specific time — once, every 24h, or weekly on chosen day(s). After the reboot, band-fix runs automatically. See [Scheduling a Modem Reboot](#scheduling-a-modem-reboot) for why this is useful.
 
 ### v1.2.0 (2026-06-24)
 - **Multi-ISP profile support**: install.sh asks which ISP during setup; profile is stored in config and used by all scripts
@@ -217,11 +220,19 @@ Bands are non-compliant. Apply <ISP profile> fix now? [Y/n]
 
 ### Scheduling a Modem Reboot
 
-**Menu option 8 — Schedule one-time reboot** (new in v1.3.0)
+**Menu option 8 — Schedule reboot** (once/daily since v1.3.0, weekly since v1.4.0)
 
-Some FWA ISPs renew your public IP address every 24 hours at the exact time you first activated your connection. If you activated at 20:00, your IP changes every night at 20:00 — causing a 2–3 minute connection drop at that time, every day.
+Some FWA ISPs renew your public IP address every 24 hours at the exact time you first activated your connection. If you activated at 20:00, your IP changes every night at 20:00 — causing a 2–3 minute connection drop at that time, every day. Some ISPs (e.g. Odido NL) also let that renewal time *drift* by several minutes each day, so a fixed daily reboot slowly falls out of sync with it.
 
-By scheduling a one-time reboot of the U5G-Max just before or at a convenient low-traffic time (e.g. 04:00), the modem re-registers with the network and the 24-hour IP renewal cycle resets to that new time. After the one-time reboot, future IP renewals happen at 04:00 instead of 20:00 — while you're asleep.
+Three schedule types are available:
+
+1. **Once** — reboot a single time, then the schedule removes itself automatically. No cleanup needed.
+2. **Daily** — reboot every 24h at a fixed time. Resets the IP-renewal cycle to that time going forward.
+3. **Weekly** — reboot on one or more chosen days of the week, at a fixed time. Useful when the renewal time drifts day by day (rather than staying fixed): instead of chasing the drift with a nightly reboot, a weekly reboot on a quiet day (e.g. Sunday night) periodically resyncs the renewal cycle without a reboot every single night.
+
+For a weekly schedule, pick the day(s) from a list (Monday–Sunday), comma-separated for multiple days, e.g. `1,3,5` for Monday/Wednesday/Friday.
+
+By scheduling the reboot just before or at a convenient low-traffic time (e.g. 04:00), the modem re-registers with the network at a moment you don't notice.
 
 After the scheduled reboot, `reboot-modem.sh` automatically:
 1. Waits for the modem to come back online (boot takes ~5 minutes)
@@ -233,7 +244,7 @@ To schedule a reboot, use option 8 in the menu or:
 u5gmax-bandfix reboot-schedule
 ```
 
-The time you enter is in your **local system timezone** (shown on screen). A one-time schedule removes itself after executing — no cleanup needed.
+The time you enter is in your **local system timezone** (shown on screen). Daily and weekly schedules survive a firmware update / reboot (restored automatically by `on-boot.sh`); a one-time schedule is not restored if the scheduled time has already passed.
 
 ### Check logs
 
