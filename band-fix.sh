@@ -237,9 +237,18 @@ source "$CONFIG"
 : "${SSH_USER:?CONFIG missing SSH_USER}"
 validate_ssh_user "$SSH_USER"
 
-# ISP profile — PROFILE is authoritative. Band lists are always derived here, never
-# trusted from a persisted config value, so a version update propagates new band specs
-# without requiring a manual "switch profile" round-trip.
+# ISP profile — PROFILE is authoritative. Band lists for the *built-in* profiles
+# are always derived here, never trusted from a persisted config value, so a
+# version update propagates new band specs without requiring a manual "switch
+# profile" round-trip. The "custom" profile is the one exception: by
+# definition its band lists only exist in config (the user chose them), so
+# they're read from config and strictly validated before use.
+validate_band_list() {
+    local label="$1" value="$2"
+    printf '%s' "$value" | grep -qE '^[0-9]{1,3}(,[0-9]{1,3})*$' || \
+        die "Invalid $label in config: '$value' — expected comma-separated band numbers, each 1-3 digits"
+}
+
 : "${PROFILE:=odido}"
 case "$PROFILE" in
     freemobile)
@@ -248,6 +257,16 @@ case "$PROFILE" in
         LTE_REQUIRED="1,3,7,8,28"
         NR5G_SA_REQUIRED="1,28,78"
         NR5G_NSA_REQUIRED="1,28,78"
+        ;;
+    custom)
+        PROFILE_NAME="Custom"
+        MODEM_MODEL="${MODEM_MODEL:-auto-detected}"
+        : "${LTE_REQUIRED:?CONFIG missing LTE_REQUIRED for custom profile}"
+        : "${NR5G_SA_REQUIRED:?CONFIG missing NR5G_SA_REQUIRED for custom profile}"
+        : "${NR5G_NSA_REQUIRED:?CONFIG missing NR5G_NSA_REQUIRED for custom profile}"
+        validate_band_list "LTE_REQUIRED" "$LTE_REQUIRED"
+        validate_band_list "NR5G_SA_REQUIRED" "$NR5G_SA_REQUIRED"
+        validate_band_list "NR5G_NSA_REQUIRED" "$NR5G_NSA_REQUIRED"
         ;;
     *)
         PROFILE="odido"

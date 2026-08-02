@@ -28,10 +28,110 @@ msg ""
 msg "=== u5gmax-bandfix installer ==="
 msg ""
 
+# --- Common LTE / NR5G bands, for custom band selection ---
+# "code:description" — covers the bands most FWA/CPE modems and carriers use
+# worldwide. Not an exhaustive 3GPP list (mmWave bands omitted) — if a band
+# you need isn't listed, use the "enter manually" option.
+LTE_BAND_LIST=(
+    "1:2100 MHz"            "2:1900 MHz (US PCS)"     "3:1800 MHz"
+    "4:1700/2100 MHz (US/CA AWS)" "5:850 MHz"          "7:2600 MHz"
+    "8:900 MHz"              "12:700 MHz (US)"        "13:700 MHz (US)"
+    "14:700 MHz (US, public safety)" "20:800 MHz (EU digital dividend)"
+    "25:1900 MHz (US)"       "26:850 MHz (US)"        "28:700 MHz (APT)"
+    "29:700 MHz (US, SDL)"   "32:1500 MHz (SDL)"      "38:2600 MHz (TDD)"
+    "40:2300 MHz (TDD)"      "41:2500 MHz (TDD)"      "42:3500 MHz (TDD)"
+    "66:1700/2100 MHz (AWS-3)" "71:600 MHz (US)"
+)
+NR_BAND_LIST=(
+    "1:2100 MHz"            "2:1900 MHz (US)"         "3:1800 MHz"
+    "5:850 MHz"              "7:2600 MHz"              "8:900 MHz"
+    "12:700 MHz (US)"        "20:800 MHz (EU)"         "25:1900 MHz (US)"
+    "28:700 MHz (APT)"       "38:2600 MHz (TDD)"       "40:2300 MHz (TDD)"
+    "41:2500 MHz (TDD)"      "48:3600 MHz (CBRS, US)"  "66:1700/2100 MHz (AWS-3)"
+    "71:600 MHz (US)"        "77:3300-4200 MHz (C-band, TDD)"
+    "78:3300-3800 MHz (C-band, TDD — most common global mid-band 5G)"
+    "79:4400-5000 MHz (TDD)"
+)
+
+# select_bands <title> <preselected_csv> <"code:desc" entry> ...
+# Interactive checklist. Prints the chosen comma-separated band list to stdout
+# (all UI goes to stderr so it's safe to capture with $(...)).
+select_bands() {
+    local title="$1" preselect="$2"; shift 2
+    local -a entries=("$@")
+    local -a codes=() descs=() selected=()
+    local i entry code desc
+    local _sel_input _manual _tok _t _idx
+
+    for entry in "${entries[@]}"; do
+        code="${entry%%:*}"; desc="${entry#*:}"
+        codes+=("$code"); descs+=("$desc")
+        if printf ',%s,' "$preselect" | grep -q ",$code,"; then
+            selected+=(1)
+        else
+            selected+=(0)
+        fi
+    done
+
+    while true; do
+        printf "\n${BOLD}%s${NC}\n" "$title" >&2
+        for i in "${!codes[@]}"; do
+            if [ "${selected[$i]}" = "1" ]; then
+                printf "  %2d) ${GREEN}[x]${NC} %-4s %s\n" "$((i+1))" "${codes[$i]}" "${descs[$i]}" >&2
+            else
+                printf "  %2d) [ ] %-4s %s\n" "$((i+1))" "${codes[$i]}" "${descs[$i]}" >&2
+            fi
+        done
+        printf "\n  Enter numbers to toggle (e.g. 1 3 7), 'a'=all, 'n'=none,\n" >&2
+        printf "  'm'=enter band numbers manually, 'd'=done: " >&2
+        read -r _sel_input
+
+        case "$_sel_input" in
+            d|D|"")
+                break
+                ;;
+            a|A)
+                for i in "${!selected[@]}"; do selected[$i]=1; done
+                ;;
+            n|N)
+                for i in "${!selected[@]}"; do selected[$i]=0; done
+                ;;
+            m|M)
+                read -r -p "  Enter band numbers, comma-separated (e.g. 1,3,7,20): " _manual >&2
+                _manual=$(printf '%s' "$_manual" | tr -d '[:space:]')
+                if ! printf '%s' "$_manual" | grep -qE '^[0-9]{1,3}(,[0-9]{1,3})*$'; then
+                    printf "  ${RED}Invalid format — expected comma-separated band numbers, each 1-3 digits (e.g. 1,3,7,20). Did the commas get dropped?${NC}\n" >&2
+                    continue
+                fi
+                printf '%s\n' "$_manual"
+                return 0
+                ;;
+            *)
+                for _tok in $_sel_input; do
+                    _tok="${_tok//,/ }"
+                    for _t in $_tok; do
+                        if [[ "$_t" =~ ^[0-9]+$ ]] && [ "$_t" -ge 1 ] 2>/dev/null && [ "$_t" -le "${#codes[@]}" ] 2>/dev/null; then
+                            _idx=$((_t - 1))
+                            if [ "${selected[$_idx]}" = "1" ]; then selected[$_idx]=0; else selected[$_idx]=1; fi
+                        fi
+                    done
+                done
+                ;;
+        esac
+    done
+
+    local out=""
+    for i in "${!codes[@]}"; do
+        [ "${selected[$i]}" = "1" ] && out="${out}${codes[$i]},"
+    done
+    printf '%s\n' "${out%,}"
+}
+
 # --- ISP profile selection ---
 msg "Select your ISP profile:"
 printf "  ${BOLD}1)${NC} Odido NL       — LTE B1/3/7/32/38, NR5G n1/3/7/38/78\n"
 printf "  ${BOLD}2)${NC} Free Mobile FR — LTE B1/3/7/8/28, NR5G n1/28/78\n"
+printf "  ${BOLD}3)${NC} Custom         — pick your own bands from a list\n"
 printf "\n  Choose [1]: "
 read -r _PROFILE_CHOICE
 
@@ -51,6 +151,31 @@ case "${_PROFILE_CHOICE:-1}" in
         LTE_REQUIRED="1,3,7,8,28"
         NR5G_SA_REQUIRED="1,28,78"
         NR5G_NSA_REQUIRED="1,28,78"
+        ;;
+    3)
+        PROFILE="custom"
+        PROFILE_NAME="Custom"
+        MODEM_MODEL="auto-detected"
+        msg ""
+        msg "Pick exactly the bands your ISP/SIM actually supports. Enabling a band"
+        msg "your ISP doesn't provide is harmless but won't help; check your ISP's"
+        msg "published FWA/CPE band spec if you're not sure."
+        LTE_REQUIRED=$(select_bands "LTE bands" "" "${LTE_BAND_LIST[@]}")
+        [ -z "$LTE_REQUIRED" ] && die "No LTE bands selected — at least one is required"
+        ok "LTE bands: $LTE_REQUIRED"
+
+        NR5G_SA_REQUIRED=$(select_bands "NR5G SA bands" "" "${NR_BAND_LIST[@]}")
+        [ -z "$NR5G_SA_REQUIRED" ] && die "No NR5G SA bands selected — at least one is required"
+        ok "NR5G SA bands: $NR5G_SA_REQUIRED"
+
+        printf "\n  Use the same bands for NR5G NSA? [Y/n]: "
+        read -r _same_nsa
+        case "${_same_nsa:-Y}" in
+            [Yy]|"") NR5G_NSA_REQUIRED="$NR5G_SA_REQUIRED" ;;
+            *) NR5G_NSA_REQUIRED=$(select_bands "NR5G NSA bands" "$NR5G_SA_REQUIRED" "${NR_BAND_LIST[@]}") ;;
+        esac
+        [ -z "$NR5G_NSA_REQUIRED" ] && die "No NR5G NSA bands selected — at least one is required"
+        ok "NR5G NSA bands: $NR5G_NSA_REQUIRED"
         ;;
     *)
         die "Invalid choice — run install.sh again"

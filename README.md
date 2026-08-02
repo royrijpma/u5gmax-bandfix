@@ -2,7 +2,7 @@
 
 Automatically enforce ISP band restrictions on the UniFi U5G-Max modem — persistently, from the Cloud Gateway.
 
-Supports **Odido NL** and **Free Mobile FR** out of the box. Switching profiles takes one command.
+Supports **Odido NL** and **Free Mobile FR** out of the box, plus a **Custom** profile with an interactive band picker for any other ISP/country. Switching profiles takes one command.
 
 The modem is detected automatically by searching for any `UMBBE*` model in MongoDB — works regardless of hardware revision (UMBBE630, UMBBE631, or future variants).
 
@@ -11,6 +11,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 ---
 
 ## Changelog
+
+### v1.5.0 (2026-07-31)
+- **Custom ISP profile** (install.sh option 3, or menu option 3 "Switch ISP profile"): pick any LTE/NR5G bands from an interactive checklist instead of being limited to the two built-in profiles — covers ISPs/countries not shipped with a preset (e.g. Spain, where the right bands depend on the carrier: Movistar/Vodafone/Orange don't all use the same set). Choices persist to config as `LTE_REQUIRED`/`NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` (only for `PROFILE="custom"` — built-in profiles still always derive their bands at runtime, never from a stale config value).
 
 ### v1.4.0 (2026-07-25)
 - **Weekly reboot schedule** (menu option 8, third schedule type): reboot the U5G-Max on chosen day(s) of the week at a specific time, instead of only once or every 24h. Useful when the ISP's daily IP-renewal time drifts over time (e.g. Odido NL creeping ~10 minutes later per day) — a weekly reboot on a low-traffic day resets the renewal cycle without needing a reboot every single night. Day selection is comma-separated (e.g. `1,3,5` for Monday/Wednesday/Friday); restored automatically on boot like the daily schedule.
@@ -89,6 +92,10 @@ ISPs that offer FWA (Fixed Wireless Access) over 5G publish a hardware specifica
 
 *Source: [Free Mobile France spectrum allocation](https://www.spectrum-tracker.com/France/Free-Mobile) (ARCEP licensed bands). No official FWA hardware spec document published by Free Mobile.*
 
+### Custom
+
+For any ISP/country not covered above, pick "Custom" during install (or via "Switch ISP profile" in the menu) and select the exact LTE/NR5G bands from an interactive checklist — or enter band numbers manually. Useful where the right bands depend on the carrier rather than the country (e.g. Spain: Movistar, Vodafone, and Orange don't all use the same set). The chosen bands are stored in config as `LTE_REQUIRED`/`NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` and enforced exactly like a built-in profile.
+
 ---
 
 ## WCDMA Recovery
@@ -148,7 +155,7 @@ curl -sSL https://raw.githubusercontent.com/royrijpma/u5gmax-bandfix/main/instal
 
 Run as root on the Cloud Gateway. The installer will:
 
-1. **Ask which ISP profile** to use (Odido NL or Free Mobile FR)
+1. **Ask which ISP profile** to use (Odido NL, Free Mobile FR, or Custom — pick your own bands)
 2. Read the SSH username and password from MongoDB (no manual input needed)
 3. Detect the U5G-Max IP from MongoDB
 4. Generate an SSH key pair at `/data/u5gmax-bandfix/id_ed25519`
