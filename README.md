@@ -12,6 +12,10 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.5.1 (2026-09-29)
+- **Fix: compliance check now reads the modem's live radio preference.** `uiwwand-ctl get-radio-pref` has two forms that return different things: the parameter-less form returns the modem's *live* selection preference, while the form with `{"iccid": ...}` returns a *stored per-SIM profile* — `{"result":{"iccid":"...","error":"no profile found"}}` until the first `set-radio-pref` for that SIM, and afterwards an echo of what was last stored (observed on U5G-Max firmware 7.5.3). The scripts used the iccid form everywhere, so on a fresh 7.5.3 install every hourly run saw an empty `mode`/band set, re-applied the fix and then failed its own verification. `band-fix.sh` (fetch / post-WCDMA re-fetch / verify) and the CLI band status now read the parameter-less form first and only fall back to the iccid form if the live query is unavailable. `set-radio-pref` is unchanged.
+- Tested-environment table extended with a UCG Max / U5G-Max 7.5.3 / Network 10.6 setup (Odido NL).
+
 ### v1.5.0 (2026-07-31)
 - **Custom ISP profile** (install.sh option 3, or menu option 3 "Switch ISP profile"): pick any LTE/NR5G bands from an interactive checklist instead of being limited to the two built-in profiles — covers ISPs/countries not shipped with a preset (e.g. Spain, where the right bands depend on the carrier: Movistar/Vodafone/Orange don't all use the same set). Choices persist to config as `LTE_REQUIRED`/`NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` (only for `PROFILE="custom"` — built-in profiles still always derive their bands at runtime, never from a stale config value).
 
@@ -132,12 +136,12 @@ The ICCID of the active SIM is required by `uiwwand-ctl set-radio-pref`. It's re
 
 ## Tested Environment
 
-| Component | Version |
-|-----------|---------|
-| Cloud Gateway Fiber firmware | v5.1.19 |
-| U5G-Max firmware | 7.4.1.19032 |
-| UniFi Network | 10.4.57 |
-| ISP | Odido 5G Internet (FWA, NL) |
+| Component | Setup 1 | Setup 2 |
+|-----------|---------|---------|
+| Cloud Gateway | Cloud Gateway Fiber, v5.1.19 | Cloud Gateway Max |
+| U5G-Max firmware | 7.4.1.19032 | 7.5.3.19533 |
+| UniFi Network | 10.4.57 | 10.6.106 |
+| ISP | Odido 5G Internet (FWA, NL) | Odido 5G Internet (FWA, NL) |
 
 ## Requirements
 
@@ -273,6 +277,13 @@ ICCID=$(grep ICCID_CACHE /data/u5gmax-bandfix/config | cut -d'"' -f2)
 U5G_IP=$(mongo --quiet localhost:27117/ace --eval 'var d=db.device.findOne({model:/^UMBBE/}); print(d ? d.ip : "null")')
 SSH_USER=$(grep SSH_USER /data/u5gmax-bandfix/config | cut -d'"' -f2)
 printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$ICCID" \
+  | ssh -i /data/u5gmax-bandfix/id_ed25519 "${SSH_USER}@${U5G_IP}" uiwwand-ctl
+```
+
+The iccid form returns the stored per-SIM profile (`"error":"no profile found"` until the first `set-radio-pref`). To see what the modem is actually using, read the live preference with the parameter-less form (this is what the scripts check against):
+
+```bash
+printf '{"method":"get-radio-pref"}' \
   | ssh -i /data/u5gmax-bandfix/id_ed25519 "${SSH_USER}@${U5G_IP}" uiwwand-ctl
 ```
 

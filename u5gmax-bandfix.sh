@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.5.0"
+VERSION="1.5.1"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -477,9 +477,15 @@ action_band_status() {
 
     [ -z "$iccid" ] && { printf "${R}Could not read ICCID.${NC}\n"; pause; return; }
 
-    current=$(printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$iccid" \
-        | ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" "uiwwand-ctl" 2>/dev/null) || \
-        { printf "${R}Could not read band config from modem.${NC}\n"; pause; return; }
+    # Live preference first (parameter-less form); the iccid form returns the
+    # stored per-SIM profile, which may not exist yet — same logic as band-fix.sh
+    current=$(printf '{"method":"get-radio-pref"}' \
+        | ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" "uiwwand-ctl" 2>/dev/null) || current=""
+    if ! printf '%s' "$current" | grep -q '"mode"'; then
+        current=$(printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$iccid" \
+            | ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" "uiwwand-ctl" 2>/dev/null) || \
+            { printf "${R}Could not read band config from modem.${NC}\n"; pause; return; }
+    fi
 
     printf "\n${W}ICCID:${NC} %s\n\n" "$iccid"
 

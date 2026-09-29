@@ -100,6 +100,35 @@ _ssh_bg() {
     return $_rc
 }
 
+# --- Helper: read the modem's radio preferences ---
+# uiwwand-ctl get-radio-pref has two forms that return different things:
+#   {"method":"get-radio-pref"}                      -> the modem's LIVE selection
+#       preference (mode + band lists; matches qmicli
+#       --nas-get-system-selection-preference)
+#   {"method":"get-radio-pref","params":{"iccid":X}} -> the STORED per-SIM profile:
+#       {"result":{"iccid":X,"error":"no profile found"}} until the first
+#       set-radio-pref for that SIM, afterwards an echo of what was last stored
+#       (observed on U5G-Max firmware 7.5.3).
+# Compliance must be judged on the live preference: after a modem reboot or a
+# controller config push the live preference is reset while the stored profile
+# may still look compliant. So read the parameter-less form first and only fall
+# back to the iccid form if the live query is unavailable (older firmware).
+# Usage: _get_radio_pref <outfile> <tag>   (JSON reply in outfile; returns ssh rc)
+_get_radio_pref() {
+    local _out="$1" _tag="$2" _rc=0 _req
+    _req="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-${_tag}.json"
+    printf '{"method":"get-radio-pref"}\n' > "$_req"
+    _ssh_bg "$_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_req" || _rc=$?
+    if [ $_rc -ne 0 ] || [ ! -s "$_out" ] || ! grep -q '"mode"' "$_out"; then
+        log "Parameter-less get-radio-pref not available — falling back to the iccid form"
+        _rc=0
+        printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_req"
+        _ssh_bg "$_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_req" || _rc=$?
+    fi
+    rm -f "$_req"
+    return $_rc
+}
+
 # --- Helper: update known_hosts when IP changes ---
 # ssh-keyscan uses SIGALRM internally for its -T timeout, which does not
 # fire reliably in the UCG Fiber cron container namespace — wrap it in the
@@ -378,13 +407,11 @@ fi
 
 # --- Fetch current band configuration ---
 log "Fetching current band config..."
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-get.json"
 _ssh_out="$TMP_DIR/ssh_get.txt"
-printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-    { rm -f "$_tmpfile" "$_ssh_out"; die "get-radio-pref failed"; }
+_get_radio_pref "$_ssh_out" "get" || \
+    { rm -f "$_ssh_out"; die "get-radio-pref failed"; }
 CURRENT=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+rm -f "$_ssh_out"
 
 if [ -z "$CURRENT" ]; then
     log "WARNING: uiwwand-ctl returned empty response — modem still initializing, cron will retry"
@@ -429,13 +456,11 @@ if [ "$RAT_MODE" = "WCDMA" ]; then
         log "WCDMA persists after reregistration — modem may need manual intervention, skipping band fix this run"
         exit 0
     fi
-    _tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-get2.json"
     _ssh_out="$TMP_DIR/ssh_get2.txt"
-    printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-    _ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-        { rm -f "$_tmpfile" "$_ssh_out"; die "get-radio-pref failed"; }
+    _get_radio_pref "$_ssh_out" "get2" || \
+        { rm -f "$_ssh_out"; die "get-radio-pref failed"; }
     CURRENT=$(cat "$_ssh_out")
-    rm -f "$_tmpfile" "$_ssh_out"
+    rm -f "$_ssh_out"
     if [ -z "$CURRENT" ]; then
         log "WARNING: uiwwand-ctl returned empty after WCDMA recovery — modem still initializing, cron will retry"
         exit 0
@@ -519,13 +544,11 @@ fi
 
 # --- Verify ---
 log "Verifying..."
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-verify.json"
 _ssh_out="$TMP_DIR/ssh_verify.txt"
-printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-    die "verify get-radio-pref failed"
+_get_radio_pref "$_ssh_out" "verify" || \
+    { rm -f "$_ssh_out"; die "verify get-radio-pref failed"; }
 VERIFY=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+rm -f "$_ssh_out"
 REMAINING=$(check_compliance "$VERIFY")
 if [ -n "$REMAINING" ]; then
     die "Fix applied but config still non-compliant:$REMAINING"
