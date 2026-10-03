@@ -254,7 +254,7 @@ case "$PROFILE" in
     freemobile)
         PROFILE_NAME="Free Mobile FR"
         MODEM_MODEL="UMBBE631"
-        LTE_REQUIRED="1,3,7,8,28"
+        LTE_REQUIRED="1,3,7,8,20,28"
         NR5G_SA_REQUIRED="1,28,78"
         NR5G_NSA_REQUIRED="1,28,78"
         ;;

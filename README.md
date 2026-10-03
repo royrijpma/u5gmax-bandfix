@@ -86,11 +86,12 @@ ISPs that offer FWA (Fixed Wireless Access) over 5G publish a hardware specifica
 
 | Radio | Required active bands | Must be disabled |
 |-------|----------------------|-----------------|
-| LTE (FDD) | B1, B3, B7, B8, B28 | B20, B38 |
+| LTE (FDD) | B1, B3, B7, B8, B20, B28 | B38 |
 | NR5G SA/NSA (FDD) | n1, n28 | n3, n7, n8, n20, n38 |
 | NR5G SA/NSA (TDD) | n78 | — |
 
 *Source: [Free Mobile France spectrum allocation](https://www.spectrum-tracker.com/France/Free-Mobile) (ARCEP licensed bands). No official FWA hardware spec document published by Free Mobile.*
+*Source about LTE B20 (only in less denses areas in "4G ZB" RAN Sharing : [RAN Sharing in less denses areas in France](https://lafibre.info/4g/20-mhz-en-800-mhz-en-zb/msg1102790/#msg1102790)*
 
 ### Custom
 
