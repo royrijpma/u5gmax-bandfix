@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.5.0"
+VERSION="1.5.1"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -374,7 +374,7 @@ print_header() {
     printf "  ${W}Cron:${NC}        %s\n" "$cron"
     printf "  ${W}Last run:${NC}    %s\n" "$last_run"
     printf "  ${W}Result:${NC}      %s\n" "$result"
-    printf "  ${W}Signal:${NC}      %s\n" "$SIGNAL_SUMMARY"
+    printf "  ${W}Signal:${NC}      %b\n" "$SIGNAL_SUMMARY"   # %b: the summary carries colour codes as text (\033[..m)
     printf "  ${W}Reboot:${NC}      %s\n" "$reboot_status"
     printf "${C}"
     printf '╠══════════════════════════════════════════════╣\n'

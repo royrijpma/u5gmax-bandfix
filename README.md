@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.5.1 (2026-10-19)
+- **Fix: the `Signal:` line in the menu header showed raw colour codes** (`\033[1;33munavailable\033[0m`) instead of coloured text. The summary string carries its colours as text, and the header printed it with `%s`; it now uses `%b` like the other coloured fields.
+
 ### v1.5.0 (2026-07-31)
 - **Custom ISP profile** (install.sh option 3, or menu option 3 "Switch ISP profile"): pick any LTE/NR5G bands from an interactive checklist instead of being limited to the two built-in profiles — covers ISPs/countries not shipped with a preset (e.g. Spain, where the right bands depend on the carrier: Movistar/Vodafone/Orange don't all use the same set). Choices persist to config as `LTE_REQUIRED`/`NR5G_SA_REQUIRED`/`NR5G_NSA_REQUIRED` (only for `PROFILE="custom"` — built-in profiles still always derive their bands at runtime, never from a stale config value).
 
