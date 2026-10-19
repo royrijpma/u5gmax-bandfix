@@ -125,6 +125,33 @@ _update_known_hosts() {
     printf '%s\n' "$_new" > "$LAST_IP_FILE"
 }
 
+# --- Helper: follow credential changes in UniFi (the device SSH user/password can be rotated) ---
+# The config caches SSH_USER/SSH_PASS from install time. When UniFi changes them (new adoption, firmware, rotation) the cached pair
+# is stale and every key reinstall fails ("ssh-copy-id failed rc=5") although the modem is online. Re-read them from MongoDB and,
+# when they differ, rewrite the config (values single-quoted, so any password survives `. config`).
+_refresh_credentials() {
+    local _u _p _cu _cp
+    _u=$(timeout 30 mongo --quiet localhost:27117/ace --eval 'var s=db.setting.findOne({key:"mgmt"}); print(s ? s.x_ssh_username : "null")' < /dev/null 2>/dev/null | tr -d '\r\n') || true
+    _p=$(timeout 30 mongo --quiet localhost:27117/ace --eval 'var s=db.setting.findOne({key:"mgmt"}); print(s ? s.x_ssh_password : "null")' < /dev/null 2>/dev/null | tr -d '\r\n') || true
+    if [ -z "$_u" ] || [ "$_u" = "null" ] || [ -z "$_p" ] || [ "$_p" = "null" ]; then
+        log "Could not read the current SSH credentials from UniFi — keeping the cached ones"
+        return 0
+    fi
+    if ! printf '%s' "$_u" | grep -qE '^[a-zA-Z0-9_-]{1,32}$'; then
+        log "UniFi reports an SSH user with unexpected characters — keeping the cached credentials"
+        return 0
+    fi
+    _cu="$SSH_USER"; _cp=$(. "$CONFIG" 2>/dev/null; printf '%s' "${SSH_PASS:-}")
+    [ "$_u" = "$_cu" ] && [ "$_p" = "$_cp" ] && return 0
+    log "UniFi's SSH credentials changed (user: $_cu -> $_u${_p:+, password updated}) — updating the config"
+    local _tmp="$CONFIG.new"
+    grep -vE '^(SSH_USER|SSH_PASS)=' "$CONFIG" > "$_tmp" 2>/dev/null || : > "$_tmp"
+    printf 'SSH_USER=%s\n' "'$_u'" >> "$_tmp"
+    printf "SSH_PASS='%s'\n" "$(printf '%s' "$_p" | sed "s/'/'\\\\''/g")" >> "$_tmp"
+    chmod 600 "$_tmp"; mv "$_tmp" "$CONFIG"
+    SSH_USER="$_u"
+}
+
 # --- Helper: reinstall SSH key using controller credentials (self-heal after modem reboot) ---
 # Modem tmpfs is wiped on reboot: authorized_keys + host keys are lost.
 # This reads the controller SSH password from MongoDB, rescans the host key,
@@ -318,6 +345,7 @@ if ! _ssh_bg "$_chk" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "exit 0"; then
         _update_known_hosts "$U5G_IP" "$_fresh"
         U5G_IP="$_fresh"
     fi
+    _refresh_credentials
     if ! _ssh_bg "$_chk" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "exit 0"; then
         if _reinstall_key "$U5G_IP"; then
             if ! _ssh_bg "$_chk" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "exit 0"; then

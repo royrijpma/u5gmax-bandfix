@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.5.1"
+VERSION="1.5.2"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
