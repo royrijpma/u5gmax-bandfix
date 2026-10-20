@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.5.2"
+VERSION="1.5.3"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -302,8 +302,14 @@ load_config() {
 # would make every keypress depend on modem/cellular latency).
 SIGNAL_SUMMARY="—"
 
+SIGNAL_OK=0; SIGNAL_TS=0
+
 refresh_signal_summary() {
     local ip raw
+    SIGNAL_TS=$(date +%s); SIGNAL_OK=0
+    # band-fix.sh may have rewritten SSH_USER in the config since this menu started (UniFi rotates it): follow it
+    local _u; _u=$(. "$CONFIG" 2>/dev/null; printf '%s' "${SSH_USER:-}")
+    [ -n "$_u" ] && printf '%s' "$_u" | grep -qE '^[a-zA-Z0-9_-]{1,32}$' && SSH_USER="$_u"
     ip=$(get_ip)
     if [ -z "$ip" ] || [ "$ip" = "null" ]; then
         SIGNAL_SUMMARY="${R}modem offline${NC}"
@@ -352,6 +358,15 @@ else:
     if [ -z "$SIGNAL_SUMMARY" ]; then
         SIGNAL_SUMMARY="${Y}unavailable${NC}"
     fi
+    case "$SIGNAL_SUMMARY" in *unavailable*|*offline*) ;; *) SIGNAL_OK=1 ;; esac
+}
+
+# Self-heal: a failed fetch is not cached for the whole session. Every menu redraw retries it, at most once per 30 s,
+# and only while it is failing (a working summary is never refetched: no SSH call per keypress).
+maybe_refresh_signal() {
+    [ "$SIGNAL_OK" = 1 ] && return 0
+    [ $(( $(date +%s) - SIGNAL_TS )) -ge 30 ] && refresh_signal_summary
+    return 0
 }
 
 print_header() {
@@ -880,20 +895,21 @@ fi
 # for the rest of the session, see refresh_signal_summary comment above).
 refresh_signal_summary
 while true; do
+    maybe_refresh_signal
     print_header
     print_menu
     printf "\n  ${W}Choose:${NC} "
     read -r CHOICE
 
     case "$CHOICE" in
-        1) action_force_check ;;
+        1) action_force_check; refresh_signal_summary ;;
         2) action_band_status ;;
-        3) action_switch_profile ;;
+        3) action_switch_profile; refresh_signal_summary ;;
         4) action_show_logs ;;
-        5) action_reinstall_key ;;
+        5) action_reinstall_key; refresh_signal_summary ;;
         6) action_update ;;
         7) action_uninstall ;;
-        8) action_schedule_reboot ;;
+        8) action_schedule_reboot; refresh_signal_summary ;;
         0) clear; exit 0 ;;
         *) printf "\n${R}Invalid choice.${NC}\n"; sleep 1 ;;
     esac

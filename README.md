@@ -12,6 +12,9 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.5.3 (2026-10-20)
+- **Auto-fix: the `Signal:` line no longer stays "unavailable" for the whole menu session.** It was fetched once at startup and cached, so a menu opened before the SSH key was restored kept showing "unavailable" although the modem worked. A failed fetch is now retried on every menu redraw (at most once per 30 s, only while failing), the summary is refetched after "Force band check", "Switch ISP profile", "Reinstall SSH key" and "Schedule reboot", and the menu follows a `SSH_USER` that `band-fix.sh` rewrote in the config.
+
 ### v1.5.2 (2026-10-19)
 - **Fix: "Modem offline" while the modem is online (stale SSH credentials).** The config caches `SSH_USER`/`SSH_PASS` from install time. When UniFi changed the device SSH user/password, every hourly run failed at `ssh-copy-id failed (rc=5)` and the CLI reported "Modem offline", although the host key scan reached the modem. When SSH fails, `band-fix.sh` now re-reads the current user and password from UniFi (MongoDB), and if they differ it rewrites the config (single-quoted, mode 600) and retries the key reinstall with them. The password is never written to the log.
 
