@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="nl" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iSponsorBlockTV dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class'}</script>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+<div class="max-w-5xl mx-auto p-4 space-y-4">
+  <header class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold">iSponsorBlockTV <span class="text-slate-500 font-normal">dashboard</span></h1>
+    <span id="state" class="px-3 py-1 rounded-full text-sm bg-slate-800">…</span>
+  </header>
+
+  <div id="toast" class="hidden px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm"></div>
+
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-3" id="tiles"></section>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+      <h2 class="font-medium">Instellingen</h2>
+      <label class="flex items-center justify-between"><span>Advertenties dempen (mute_ads)</span><input type="checkbox" id="mute_ads" class="h-5 w-5 accent-indigo-500"></label>
+      <label class="flex items-center justify-between"><span>Advertenties overslaan (skip_ads)</span><input type="checkbox" id="skip_ads" class="h-5 w-5 accent-indigo-500"></label>
+      <div class="pt-2 border-t border-slate-800 text-sm text-slate-400">SponsorBlock-categorieën</div>
+      <div class="grid grid-cols-2 gap-2">
+        {% for c in categories %}
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="cat h-4 w-4 accent-indigo-500" value="{{c}}">{{c}}</label>
+        {% endfor %}
+      </div>
+      <button onclick="saveConfig()" class="w-full bg-indigo-600 hover:bg-indigo-500 rounded-lg py-2 font-medium">Opslaan &amp; herstarten</button>
+    </section>
+
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+      <h2 class="font-medium">Versie &amp; updates</h2>
+      <div class="text-sm text-slate-400">Huidige tag: <b id="curTag" class="text-slate-200">-</b> · image <span id="curImg">-</span></div>
+      <select id="tagSel" class="w-full bg-slate-800 rounded-lg p-2" onchange="document.getElementById('tagCustom').value=''">
+        <option value="latest">latest (stabiel)</option>
+        <option value="close-ads-5s">close-ads-5s (experimenteel: sluit ads na 5s)</option>
+      </select>
+      <input id="tagCustom" placeholder="Of eigen tag, bijv. develop" class="w-full bg-slate-800 rounded-lg p-2 text-sm">
+      <button onclick="applyTag()" id="updBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2 font-medium">Toepassen / Check &amp; Update</button>
+      <p class="text-xs text-slate-500">Pullt de image van GHCR en maakt de container opnieuw aan met dezelfde instellingen. Je tv-koppelingen blijven behouden.</p>
+    </section>
+  </div>
+
+  <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+    <h2 class="font-medium mb-3">Tv's</h2>
+    <div id="devices" class="grid md:grid-cols-2 gap-3"></div>
+  </section>
+
+  <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+    <h2 class="font-medium mb-3">Live logs (laatste 30)</h2>
+    <pre id="logs" class="text-xs bg-black/50 rounded-lg p-3 h-64 overflow-auto whitespace-pre-wrap"></pre>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let formDirty = false, formLoaded = false;
+document.addEventListener('change', e => { if (e.target.closest('section')) formDirty = true; });
+
+function toast(msg, ok=true){
+  const t=$('toast'); t.textContent=msg; t.className='px-4 py-2 rounded-lg border text-sm '+(ok?'bg-emerald-950 border-emerald-800':'bg-red-950 border-red-800');
+  setTimeout(()=>t.classList.add('hidden'),6000);
+}
+function fmtUp(s){ if(s==null) return '-'; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60); return (d?d+'d ':'')+h+'u '+m+'m'; }
+function tile(label,val){ return `<div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-xs text-slate-400">${label}</div><div class="text-2xl font-semibold mt-1">${val}</div></div>`; }
+function esc(s){ return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function refresh(){
+  let r; try { r = await (await fetch('api/status')).json(); } catch { $('state').textContent='GUI offline'; return; }
+  const c=r.container;
+  $('state').textContent = c.exists ? c.status : 'container niet gevonden';
+  $('state').className = 'px-3 py-1 rounded-full text-sm '+(c.status==='running'?'bg-emerald-900 text-emerald-200':'bg-red-900 text-red-200');
+  $('curTag').textContent=c.tag||'-'; $('curImg').textContent=c.image_id||'-';
+  const s=r.stats;
+  $('tiles').innerHTML =
+    tile('Uptime',fmtUp(c.uptime)) +
+    tile('Gedempt (vandaag / totaal)',`${s.today.muted} / ${s.total.muted}`) +
+    tile('Ads overgeslagen',`${s.today.skipped_ads} / ${s.total.skipped_ads}`) +
+    tile('Segmenten overgeslagen',`${s.today.segments} / ${s.total.segments}`);
+  if(!formDirty || !formLoaded){
+    $('mute_ads').checked=r.config.mute_ads; $('skip_ads').checked=r.config.skip_ads;
+    document.querySelectorAll('.cat').forEach(i=>i.checked=r.config.skip_categories.includes(i.value));
+    formLoaded=true;
+  }
+  $('devices').innerHTML = r.devices.length ? r.devices.map(d=>`
+    <div class="bg-slate-800/60 rounded-lg p-3">
+      <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full ${d.connected?'bg-emerald-400':'bg-slate-500'}"></span><b>${esc(d.name)}</b></div>
+      <div class="text-xs text-slate-400 mt-1">Video: ${d.video?esc(d.video):'-'}</div>
+      <div class="text-xs text-slate-500 mt-1 truncate">${esc(d.last||'nog geen logregels')}</div>
+    </div>`).join('') : '<div class="text-sm text-slate-500">Geen apparaten in config.json</div>';
+  const lg=$('logs'), stick = lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;
+  lg.textContent=r.logs.join('\n'); if(stick) lg.scrollTop=lg.scrollHeight;
+}
+
+async function post(url,body){ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); }
+
+async function saveConfig(){
+  const body={mute_ads:$('mute_ads').checked,skip_ads:$('skip_ads').checked,
+    skip_categories:[...document.querySelectorAll('.cat:checked')].map(i=>i.value)};
+  const r=await post('api/config',body); toast(r.message,r.ok); formDirty=false; refresh();
+}
+async function applyTag(){
+  const tag=$('tagCustom').value.trim()||$('tagSel').value;
+  const b=$('updBtn'); b.disabled=true; b.textContent='Bezig met pullen…';
+  try { const r=await post('api/update',{tag}); toast(r.message,r.ok); } finally { b.disabled=false; b.textContent='Toepassen / Check & Update'; refresh(); }
+}
+refresh(); setInterval(refresh,3000);
+</script>
+</body>
+</html>
