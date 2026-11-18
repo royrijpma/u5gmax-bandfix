@@ -1,0 +1,27 @@
+services:
+  isponsorblocktv:
+    image: ghcr.io/dmunozv04/isponsorblocktv:latest
+    container_name: isponsorblocktv
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Amsterdam
+    volumes:
+      - /Volume1/docker/isponsorblocktv/data:/app/data
+
+  isponsorblocktv-gui:
+    build: .
+    image: isponsorblocktv-gui:local
+    container_name: isponsorblocktv-gui
+    restart: unless-stopped
+    ports:
+      - "8095:8095"
+    environment:
+      - TZ=Europe/Amsterdam
+      - TARGET_CONTAINER=isponsorblocktv
+      - IMAGE_REPO=ghcr.io/dmunozv04/isponsorblocktv
+      - DATA_DIR=/app/data
+      - HOST_DATA_DIR=/Volume1/docker/isponsorblocktv/data
+    volumes:
+      - /Volume1/docker/isponsorblocktv/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock

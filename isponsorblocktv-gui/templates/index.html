@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="nl" class="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iSponsorBlockTV dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-200 min-h-screen">
+<div class="max-w-5xl mx-auto p-4 space-y-4">
+  <header class="flex items-center justify-between">
+    <h1 class="text-xl font-semibold">iSponsorBlockTV</h1>
+    <span id="state" class="px-3 py-1 rounded-full text-sm bg-zinc-800">…</span>
+  </header>
+
+  <section class="grid grid-cols-1 md:grid-cols-3 gap-4" id="stats"></section>
+
+  <section class="grid md:grid-cols-2 gap-4">
+    <div class="bg-zinc-900 rounded-xl p-4 space-y-3">
+      <h2 class="font-medium">Instellingen</h2>
+      <label class="flex justify-between"><span>Ads dempen (mute_ads)</span><input type="checkbox" id="mute_ads" class="accent-emerald-500 w-5 h-5"></label>
+      <label class="flex justify-between"><span>Ads overslaan (skip_ads)</span><input type="checkbox" id="skip_ads" class="accent-emerald-500 w-5 h-5"></label>
+      <hr class="border-zinc-800">
+      <div id="cats" class="grid grid-cols-2 gap-2 text-sm"></div>
+      <button onclick="saveConfig()" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2 font-medium">Opslaan &amp; herstarten</button>
+    </div>
+
+    <div class="bg-zinc-900 rounded-xl p-4 space-y-3">
+      <h2 class="font-medium">Image &amp; updates</h2>
+      <p class="text-sm text-zinc-400">Draait: <span id="img" class="text-zinc-200"></span><br>Online: <span id="uptime" class="text-zinc-200"></span></p>
+      <select id="tag" class="w-full bg-zinc-800 rounded-lg p-2">
+        <option value="latest">latest (stabiel)</option>
+        <option value="close-ads-5s">close-ads-5s (experimenteel)</option>
+      </select>
+      <input id="custom" placeholder="Eigen tag, bv. develop (optioneel)" class="w-full bg-zinc-800 rounded-lg p-2">
+      <button onclick="update()" id="ubtn" class="w-full bg-sky-600 hover:bg-sky-500 rounded-lg py-2 font-medium">Toepassen / Check &amp; Update</button>
+      <p id="umsg" class="text-sm text-zinc-400"></p>
+    </div>
+  </section>
+
+  <section class="bg-zinc-900 rounded-xl p-4">
+    <h2 class="font-medium mb-2">Gekoppelde tv's</h2>
+    <div id="tvs" class="space-y-1 text-sm"></div>
+  </section>
+
+  <section class="bg-zinc-900 rounded-xl p-4">
+    <h2 class="font-medium mb-2">Live logs (laatste 30)</h2>
+    <pre id="logs" class="text-xs bg-black rounded-lg p-3 h-72 overflow-auto whitespace-pre-wrap text-zinc-300"></pre>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const j = (u, o) => fetch(u, o).then(r => r.json());
+const post = (u, b) => j(u, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)});
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fmt = s => s == null ? '–' : `${Math.floor(s/86400)}d ${Math.floor(s%86400/3600)}u ${Math.floor(s%3600/60)}m`;
+
+async function loadConfig() {
+  const c = await j('/api/config');
+  if (c.error) return;
+  $('mute_ads').checked = c.mute_ads; $('skip_ads').checked = c.skip_ads;
+  $('cats').innerHTML = c.all_categories.map(k =>
+    `<label class="flex items-center gap-2"><input type="checkbox" class="cat accent-emerald-500" value="${k}" ${c.skip_categories.includes(k)?'checked':''}>${k}</label>`).join('');
+}
+async function saveConfig() {
+  const r = await post('/api/config', {mute_ads:$('mute_ads').checked, skip_ads:$('skip_ads').checked,
+    skip_categories:[...document.querySelectorAll('.cat:checked')].map(e => e.value)});
+  alert(r.error || 'Opgeslagen, container herstart.');
+}
+async function update() {
+  $('ubtn').disabled = true; $('umsg').textContent = 'Bezig met pullen en opnieuw aanmaken…';
+  const r = await post('/api/update', {tag:$('tag').value, custom_tag:$('custom').value});
+  $('umsg').textContent = r.error || r.message; $('ubtn').disabled = false; refresh();
+}
+async function refresh() {
+  const [s, st, l, t] = await Promise.all([j('/api/status'), j('/api/stats'), j('/api/logs'), j('/api/tvs')]);
+  $('state').textContent = s.found ? s.status : 'niet gevonden';
+  $('state').className = 'px-3 py-1 rounded-full text-sm ' + (s.status==='running' ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300');
+  if (s.found) { $('img').textContent = s.image; $('uptime').textContent = fmt(s.uptime); }
+  const tile = (label, k) => `<div class="bg-zinc-900 rounded-xl p-4"><div class="text-sm text-zinc-400">${label}</div>
+    <div class="text-2xl font-semibold">${st.today[k]} <span class="text-sm text-zinc-500">vandaag</span></div>
+    <div class="text-sm text-zinc-400">${st.total[k]} totaal</div></div>`;
+  $('stats').innerHTML = tile('Ads gedempt','muted') + tile('Ads overgeslagen','skipped_ads') + tile('Segmenten overgeslagen','skipped_segments');
+  $('tvs').innerHTML = t.tvs.map(v => `<div class="flex justify-between"><span>${esc(v.name)}</span><span class="text-zinc-400">
+    ${v.connected===false?'🔴 offline':v.connected?'🟢 verbonden':'⚪ onbekend'}${v.video_id?` · ${esc(v.video_id)}`:''}</span></div>`).join('') || '<span class="text-zinc-500">Geen tv\'s in config.json</span>';
+  const box = $('logs'), bottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  box.textContent = l.lines.join('\n'); if (bottom) box.scrollTop = box.scrollHeight;
+}
+loadConfig(); refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>
