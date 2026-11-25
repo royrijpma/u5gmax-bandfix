@@ -56,19 +56,29 @@ validate_ssh_user() {
     fi
 }
 
-# --- Helper: run mongo with guaranteed termination via background+SIGKILL ---
-# `timeout` and SSH ConnectTimeout do not work in UCG Fiber cron: the cron
-# environment does not propagate signals to child processes reliably.
-# Background process + explicit kill -9 works in all environments.
-_query_mongo_ip() {
-    local _out="$TMP_DIR/mongo_ip.txt"
-    local _rc=0
+# --- UniFi Network database (UniFi OS 6 / Network >= 10.6) ---
+# The controller moved from MongoDB (localhost:27117/ace) to PostgreSQL: cluster
+# "apps", port 5434, database "unifi-network", schema "config". Tables used:
+#   device  (ip, model, version, last_seen)  — the U5G-Max
+#   setting (key='mgmt', dynamic_part jsonb) — device SSH credentials
+# Queries run as root via `su - postgres` over the unix socket. psql is bounded
+# by its own connect/statement timeouts (an orphaned psql self-terminates even
+# if the su wrapper is SIGKILLed by the cron guard below); the background+SIGKILL
+# pattern is kept because `timeout` and signals do not propagate reliably in
+# UniFi OS cron environments.
+_PG_QUERY_TIMEOUT_MS=10000
+
+_pg_query() {
+    # _pg_query <sql> — prints single-column result via psql -At, "" on failure
+    local _out="$TMP_DIR/pg_out_$$" _rc=0
     : > "$_out"
-    mongo --quiet localhost:27117/ace \
-        --eval 'var d=db.device.findOne({model:/^UMBBE/}); print(d ? d.ip : "null")' \
-        < /dev/null > "$_out" 2>/dev/null &
+    printf '%s' "$1" | su - postgres -c \
+        "PGCONNECT_TIMEOUT=10 PGOPTIONS='-c statement_timeout=$_PG_QUERY_TIMEOUT_MS' psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atf -" \
+        > "$_out" 2>/dev/null &
     local _pid=$!
-    ( sleep 30 && kill -9 "$_pid" 2>/dev/null ) &
+    # Guard detached from stdout: a helper running inside $( ) must not keep the
+    # substitution's stdout pipe open for the guard's full sleep (blocking every call)
+    ( sleep 30 && kill -9 "$_pid" 2>/dev/null ) > /dev/null 2>&1 &
     local _kpid=$!
     { wait "$_pid" 2>/dev/null; } || _rc=$?
     kill "$_kpid" 2>/dev/null; wait "$_kpid" 2>/dev/null || true
@@ -77,14 +87,22 @@ _query_mongo_ip() {
     return $_rc
 }
 
+_query_pg_ip() {
+    _pg_query "SELECT coalesce((SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL ORDER BY last_seen DESC NULLS LAST LIMIT 1),'null')"
+}
+
+# Compact pretty JSON to a single line for the log (falls back to raw on parse error)
+_json_compact() {
+    printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))' 2>/dev/null || printf '%s' "$1"
+}
+
 # --- Helper: run SSH with guaranteed termination via background+SIGKILL (20s max) ---
 # Usage: _ssh_bg <outfile> [ssh args...] (stdin from caller via redirect)
 # Output captured to outfile; returns ssh exit code.
 #
 # IMPORTANT: bash redirects background process stdin to /dev/null when job
 # control is disabled (cron, non-interactive). We save the caller's stdin to a
-# tempfile BEFORE backgrounding, then pass it explicitly so ssh/uiwwand-ctl
-# gets the JSON payload.
+# tempfile BEFORE backgrounding, then pass it explicitly so ssh stays stable.
 _ssh_bg() {
     local _out="$1"; shift
     local _rc=0 _in="$TMP_DIR/ssh_bg_stdin_$$"
@@ -92,7 +110,8 @@ _ssh_bg() {
     : > "$_out"
     ssh "$@" < "$_in" > "$_out" 2>/dev/null &
     local _pid=$!
-    ( sleep 20 && kill -9 "$_pid" 2>/dev/null ) &
+    # Guard detached from stdout — see _pg_query
+    ( sleep 20 && kill -9 "$_pid" 2>/dev/null ) > /dev/null 2>&1 &
     local _kpid=$!
     { wait "$_pid" 2>/dev/null; } || _rc=$?
     kill "$_kpid" 2>/dev/null; wait "$_kpid" 2>/dev/null || true
@@ -100,10 +119,28 @@ _ssh_bg() {
     return $_rc
 }
 
+# --- Helper: modem command via ubus (U5G-Max firmware >= 8.0.4) ---
+# The old `echo <json> | ssh modem uiwwand-ctl` socket protocol is gone: the
+# daemon logs "ctl: Could not parse payload" and answers empty. Firmware 8.x
+# exposes the same JSON methods via ubus instead:
+#   ssh modem "ubus call uiwwand call '<json>'"
+# Response shape ({"result":...} / {"error":-1}) and all field names unchanged.
+# Payloads are generated internally from validated numerics/enums and never
+# contain single quotes — the guard below is defense in depth.
+_wwan_cmd() {
+    # _wwan_cmd <json-payload> — prints the modem's response JSON
+    case "$1" in *"'"*) die "wwan payload must not contain single quotes: $1";; esac
+    local _out="$TMP_DIR/wwan_out_$$" _rc=0
+    _ssh_bg "$_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "ubus call uiwwand call '$1'" || _rc=$?
+    cat "$_out"
+    rm -f "$_out"
+    return $_rc
+}
+
 # --- Helper: update known_hosts when IP changes ---
 # ssh-keyscan uses SIGALRM internally for its -T timeout, which does not
-# fire reliably in the UCG Fiber cron container namespace — wrap it in the
-# same background+SIGKILL pattern used for mongo and ssh.
+# fire reliably in the UniFi OS cron container namespace — wrap it in the
+# same background+SIGKILL pattern used for the database queries and ssh.
 _update_known_hosts() {
     local _old="$1" _new="$2" _rc=0
     log "IP changed ($_old → $_new) — updating known_hosts..."
@@ -113,7 +150,7 @@ _update_known_hosts() {
     : > "$TMP_DIR/known_hosts.tmp"
     ssh-keyscan -T 10 "$_new" > "$TMP_DIR/known_hosts.tmp" 2>/dev/null &
     local _kspid=$!
-    ( sleep 15 && kill -9 "$_kspid" 2>/dev/null ) &
+    ( sleep 15 && kill -9 "$_kspid" 2>/dev/null ) > /dev/null 2>&1 &
     local _kkpid=$!
     { wait "$_kspid" 2>/dev/null; } || _rc=$?
     kill "$_kkpid" 2>/dev/null; wait "$_kkpid" 2>/dev/null || true
@@ -131,8 +168,8 @@ _update_known_hosts() {
 # when they differ, rewrite the config (values single-quoted, so any password survives `. config`).
 _refresh_credentials() {
     local _u _p _cu _cp
-    _u=$(timeout 30 mongo --quiet localhost:27117/ace --eval 'var s=db.setting.findOne({key:"mgmt"}); print(s ? s.x_ssh_username : "null")' < /dev/null 2>/dev/null | tr -d '\r\n') || true
-    _p=$(timeout 30 mongo --quiet localhost:27117/ace --eval 'var s=db.setting.findOne({key:"mgmt"}); print(s ? s.x_ssh_password : "null")' < /dev/null 2>/dev/null | tr -d '\r\n') || true
+    _u=$(_pg_query "SELECT coalesce(dynamic_part->>'x_ssh_username','null') FROM config.setting WHERE key='mgmt'") || true
+    _p=$(_pg_query "SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'") || true
     if [ -z "$_u" ] || [ "$_u" = "null" ] || [ -z "$_p" ] || [ "$_p" = "null" ]; then
         log "Could not read the current SSH credentials from UniFi — keeping the cached ones"
         return 0
@@ -171,26 +208,15 @@ _reinstall_key() {
         _pass=$(. "$CONFIG" 2>/dev/null; printf '%s' "${SSH_PASS:-}")
     fi
 
-    # Fall back to MongoDB if cache is missing or empty
+    # Fall back to the UniFi database if cache is missing or empty
     if [ -z "$_pass" ] || [ "$_pass" = "null" ]; then
-        log "No cached SSH password in config — querying MongoDB..."
-        local _pw_out="$TMP_DIR/reinstall_pw.txt"
-        local _attempt _mpid _mkpid
-        for _attempt in 1 2; do
-            : > "$_pw_out"
-            mongo --quiet localhost:27117/ace \
-                --eval 'var d=db.setting.findOne({key:"mgmt"}); print(d ? d.x_ssh_password : "null")' \
-                < /dev/null > "$_pw_out" 2>/dev/null &
-            _mpid=$!
-            ( sleep 30 && kill -9 "$_mpid" 2>/dev/null ) &
-            _mkpid=$!
-            { wait "$_mpid" 2>/dev/null; } || true
-            kill "$_mkpid" 2>/dev/null; wait "$_mkpid" 2>/dev/null || true
-            _pass=$(tr -d '\r\n' < "$_pw_out")
-            rm -f "$_pw_out"
-            [ -n "$_pass" ] && [ "$_pass" != "null" ] && break
-            [ "$_attempt" -eq 1 ] && log "MongoDB password query returned empty — retrying in 10s..." && sleep 10
-        done
+        log "No cached SSH password in config — querying UniFi database..."
+        _pass=$(_pg_query "SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'") || true
+        if [ -z "$_pass" ] || [ "$_pass" = "null" ]; then
+            log "UniFi database password query returned empty — retrying in 10s..."
+            sleep 10
+            _pass=$(_pg_query "SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'") || true
+        fi
     fi
 
     if [ -z "$_pass" ] || [ "$_pass" = "null" ]; then
@@ -202,7 +228,7 @@ _reinstall_key() {
     : > "$TMP_DIR/reinstall_kh.tmp"
     ssh-keyscan -T 10 "$_ip" > "$TMP_DIR/reinstall_kh.tmp" 2>/dev/null &
     local _kspid=$!
-    ( sleep 15 && kill -9 "$_kspid" 2>/dev/null ) &
+    ( sleep 15 && kill -9 "$_kspid" 2>/dev/null ) > /dev/null 2>&1 &
     local _kkpid=$!
     { wait "$_kspid" 2>/dev/null; } || true
     kill "$_kkpid" 2>/dev/null; wait "$_kkpid" 2>/dev/null || true
@@ -227,7 +253,7 @@ _reinstall_key() {
         -o ConnectTimeout=10 \
         "${SSH_USER}@${_ip}" < /dev/null > /dev/null 2>/dev/null &
     local _scpid=$!
-    ( sleep 30 && kill -9 "$_scpid" 2>/dev/null ) &
+    ( sleep 30 && kill -9 "$_scpid" 2>/dev/null ) > /dev/null 2>&1 &
     local _sckpid=$!
     { wait "$_scpid" 2>/dev/null; } || _rc=$?
     kill "$_sckpid" 2>/dev/null; wait "$_sckpid" 2>/dev/null || true
@@ -237,6 +263,19 @@ _reinstall_key() {
         log "ssh-copy-id failed (rc=$_rc) — wrong password or sshd configuration changed"
         return 1
     fi
+
+    # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys, not the
+    # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key in both
+    # locations (the extra file is ignored on older firmware).
+    _PUB=$(cut -d' ' -f1,2 "${SSH_KEY}.pub")
+    sshpass -f "$_pf" ssh \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$KNOWN_HOSTS" \
+        -o ConnectTimeout=10 \
+        "${SSH_USER}@${_ip}" \
+        "mkdir -p /etc/dropbear && { grep -qxF '$_PUB' /etc/dropbear/authorized_keys 2>/dev/null || printf '%s\n' '$_PUB' >> /etc/dropbear/authorized_keys; }" \
+        < /dev/null > /dev/null 2>&1 || \
+        log "WARNING: could not update /etc/dropbear/authorized_keys on modem"
 
     log "SSH key reinstalled on $_ip"
     return 0
@@ -255,7 +294,7 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     log "Another instance is running — exiting"
     exit 0
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null; rm -f "$TMP_DIR"/u5gmax-bandfix-* "$TMP_DIR"/mongo_ip.txt "$TMP_DIR"/ssh_*.txt "$TMP_DIR"/ssh_bg_stdin_* "$TMP_DIR"/known_hosts.tmp "$TMP_DIR"/reinstall_*' EXIT
+trap 'rmdir "$LOCK_DIR" 2>/dev/null; rm -f "$TMP_DIR"/u5gmax-bandfix-* "$TMP_DIR"/pg_out_* "$TMP_DIR"/wwan_out_* "$TMP_DIR"/ssh_*.txt "$TMP_DIR"/ssh_bg_stdin_* "$TMP_DIR"/known_hosts.tmp "$TMP_DIR"/reinstall_*' EXIT
 
 # --- Load config ---
 [ -f "$CONFIG" ] || die "Config not found: $CONFIG (run install.sh first)"
@@ -305,7 +344,7 @@ case "$PROFILE" in
         ;;
 esac
 
-# --- Get current U5G-Max IP (cache-first: skip mongo on normal cron runs) ---
+# --- Get current U5G-Max IP (cache-first: skip the database on normal cron runs) ---
 LAST_IP=""
 [ -f "$LAST_IP_FILE" ] && LAST_IP=$(tr -d '\r\n' < "$LAST_IP_FILE")
 
@@ -314,11 +353,11 @@ if printf '%s' "$LAST_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]
     U5G_IP="$LAST_IP"
     log "U5G-Max IP (cached): $U5G_IP"
 else
-    log "No cached IP — querying MongoDB..."
-    U5G_IP=$(_query_mongo_ip)
-    log "MongoDB result: '$U5G_IP'"
-    [ -z "$U5G_IP" ] && die "MongoDB unavailable and no cached IP"
-    [ "$U5G_IP" = "null" ] && die "U5G-Max (UMBBE*) not found in MongoDB — is the modem adopted?"
+    log "No cached IP — querying UniFi database..."
+    U5G_IP=$(_query_pg_ip)
+    log "UniFi database result: '$U5G_IP'"
+    [ -z "$U5G_IP" ] && die "UniFi database unavailable and no cached IP"
+    [ "$U5G_IP" = "null" ] && die "U5G-Max (UMBBE*) not found in the UniFi database — is the modem adopted?"
     validate_ip "$U5G_IP"
     _update_known_hosts "" "$U5G_IP"
 fi
@@ -329,14 +368,14 @@ SSH_OPTS="-i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChec
 log "Checking SSH connectivity..."
 _chk="$TMP_DIR/ssh_chk.txt"
 if ! _ssh_bg "$_chk" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "exit 0"; then
-    log "SSH failed at $U5G_IP — polling MongoDB for updated IP (up to 5 attempts)..."
+    log "SSH failed at $U5G_IP — polling UniFi database for updated IP (up to 5 attempts)..."
     _fresh="" _poll=1
     while [ "$_poll" -le 5 ]; do
-        _fresh=$(_query_mongo_ip) || true
+        _fresh=$(_query_pg_ip) || true
         if printf '%s' "$_fresh" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
             break
         fi
-        log "MongoDB IP query returned empty (attempt $_poll/5) — retrying in 15s..."
+        log "UniFi database IP query returned empty (attempt $_poll/5) — retrying in 15s..."
         sleep 15
         _poll=$((_poll + 1))
     done
@@ -358,17 +397,17 @@ if ! _ssh_bg "$_chk" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "exit 0"; then
         fi
     fi
 else
-    # SSH to cached IP succeeded — check if MongoDB has a newer IP and switch immediately
+    # SSH to cached IP succeeded — check if the UniFi database has a newer IP and switch immediately
     if [ -n "$LAST_IP" ]; then
-        _mongo_ip=$(_query_mongo_ip 2>/dev/null) || true
-        if printf '%s' "$_mongo_ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' && \
-                [ "$_mongo_ip" != "$U5G_IP" ]; then
-            log "INFO: IP changed ($U5G_IP → $_mongo_ip) — switching to new IP now"
-            if ( _update_known_hosts "$U5G_IP" "$_mongo_ip" ); then
-                U5G_IP="$_mongo_ip"
+        _fresh_ip=$(_query_pg_ip 2>/dev/null) || true
+        if printf '%s' "$_fresh_ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' && \
+                [ "$_fresh_ip" != "$U5G_IP" ]; then
+            log "INFO: IP changed ($U5G_IP → $_fresh_ip) — switching to new IP now"
+            if ( _update_known_hosts "$U5G_IP" "$_fresh_ip" ); then
+                U5G_IP="$_fresh_ip"
                 log "INFO: Now using $U5G_IP for remainder of this run"
             else
-                log "WARNING: Could not scan host key for $_mongo_ip — continuing with $U5G_IP (still reachable)"
+                log "WARNING: Could not scan host key for $_fresh_ip — continuing with $U5G_IP (still reachable)"
             fi
         fi
     fi
@@ -376,12 +415,7 @@ fi
 
 # --- Fetch ICCID live from modem (not from static config — survives SIM swaps) ---
 log "Reading ICCID from modem..."
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-sim.json"
-_ssh_out="$TMP_DIR/ssh_sim.txt"
-printf '%s\n' '{"method":"get-sim-state"}' > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || true
-_sim_out=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+_sim_out=$(_wwan_cmd '{"method":"get-sim-state"}') || true
 ICCID=$(printf '%s' "$_sim_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result']['iccid'])" 2>/dev/null) || true
 
 if [ -z "$ICCID" ]; then
@@ -406,69 +440,44 @@ fi
 
 # --- Fetch current band configuration ---
 log "Fetching current band config..."
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-get.json"
-_ssh_out="$TMP_DIR/ssh_get.txt"
-printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-    { rm -f "$_tmpfile" "$_ssh_out"; die "get-radio-pref failed"; }
-CURRENT=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+CURRENT=$(_wwan_cmd "{\"method\":\"get-radio-pref\",\"params\":{\"iccid\":\"$ICCID\"}}") || \
+    die "get-radio-pref failed"
 
 if [ -z "$CURRENT" ]; then
-    log "WARNING: uiwwand-ctl returned empty response — modem still initializing, cron will retry"
+    log "WARNING: modem returned empty response — still initializing, cron will retry"
     exit 0
 fi
-log "Current: $CURRENT"
+log "Current: $(_json_compact "$CURRENT")"
 
 # --- Fetch current RAT mode ---
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-rat-st.json"
-_ssh_out="$TMP_DIR/ssh_rat_st.txt"
-printf '%s\n' '{"method":"get-radio-status"}' > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || true
-RAT_STATUS=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+RAT_STATUS=$(_wwan_cmd '{"method":"get-radio-status"}') || true
 RAT_MODE=$(printf '%s' "$RAT_STATUS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('result',{}).get('rat-mode-active',''))" 2>/dev/null) || true
 RAT_MODE=$(strip_nonprintable "$RAT_MODE")
 
 if [ "$RAT_MODE" = "WCDMA" ]; then
     log "WARNING: WCDMA detected — modem stuck on 3G, forcing reregistration to 4G/5G"
-    _tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-rat.json"
-    _ssh_out="$TMP_DIR/ssh_rat_set.txt"
-    printf '%s\n' '{"method":"set-radio-pref","params":{"iccid":"'"$ICCID"'","mode":"5gnr,lte"}}' > "$_tmpfile"
-    _ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || true
-    RESULT=$(cat "$_ssh_out")
-    rm -f "$_tmpfile" "$_ssh_out"
-    if echo "$RESULT" | grep -q '"result":{}'; then
+    RESULT=$(_wwan_cmd "{\"method\":\"set-radio-pref\",\"params\":{\"iccid\":\"$ICCID\",\"mode\":\"5gnr,lte\"}}") || true
+    if echo "$RESULT" | grep -q '"result":[[:space:]]*{}'; then
         log "SUCCESS: RAT mode reconfiguration triggered"
     else
-        log "WARNING: RAT mode reconfiguration attempted but unexpected response: $RESULT"
+        log "WARNING: RAT mode reconfiguration attempted but unexpected response: $(_json_compact "$RESULT")"
     fi
     log "Waiting 60s for modem to reregister..."
     sleep 60
-    _tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-rat-st2.json"
-    _ssh_out="$TMP_DIR/ssh_rat_st2.txt"
-    printf '%s\n' '{"method":"get-radio-status"}' > "$_tmpfile"
-    _ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || true
-    RAT_STATUS=$(cat "$_ssh_out")
-    rm -f "$_tmpfile" "$_ssh_out"
+    RAT_STATUS=$(_wwan_cmd '{"method":"get-radio-status"}') || true
     RAT_MODE=$(printf '%s' "$RAT_STATUS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('result',{}).get('rat-mode-active',''))" 2>/dev/null) || true
     RAT_MODE=$(strip_nonprintable "$RAT_MODE")
     if [ "$RAT_MODE" = "WCDMA" ]; then
         log "WCDMA persists after reregistration — modem may need manual intervention, skipping band fix this run"
         exit 0
     fi
-    _tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-get2.json"
-    _ssh_out="$TMP_DIR/ssh_get2.txt"
-    printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-    _ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-        { rm -f "$_tmpfile" "$_ssh_out"; die "get-radio-pref failed"; }
-    CURRENT=$(cat "$_ssh_out")
-    rm -f "$_tmpfile" "$_ssh_out"
+    CURRENT=$(_wwan_cmd "{\"method\":\"get-radio-pref\",\"params\":{\"iccid\":\"$ICCID\"}}") || \
+        die "get-radio-pref failed"
     if [ -z "$CURRENT" ]; then
-        log "WARNING: uiwwand-ctl returned empty after WCDMA recovery — modem still initializing, cron will retry"
+        log "WARNING: modem returned empty after WCDMA recovery — still initializing, cron will retry"
         exit 0
     fi
-    log "Current: $CURRENT"
+    log "Current: $(_json_compact "$CURRENT")"
 fi
 
 # --- Check compliance: compare against ISP profile spec ---
@@ -531,29 +540,18 @@ PAYLOAD=$(printf \
     '{"method":"set-radio-pref","params":{"iccid":"%s","mode":"5gnr,lte","lte_band":"%s","nr5g_sa_band":"%s","nr5g_nsa_band":"%s"}}' \
     "$ICCID" "$LTE_REQUIRED" "$NR5G_SA_REQUIRED" "$NR5G_NSA_REQUIRED")
 
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N).json"
-_ssh_out="$TMP_DIR/ssh_set.txt"
-printf '%s\n' "$PAYLOAD" > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
-    { rm -f "$_tmpfile" "$_ssh_out"; die "set-radio-pref command failed"; }
-RESULT=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
+RESULT=$(_wwan_cmd "$PAYLOAD") || die "set-radio-pref command failed"
 
-if echo "$RESULT" | grep -q '"result":{}'; then
+if echo "$RESULT" | grep -q '"result":[[:space:]]*{}'; then
     log "SUCCESS: Band configuration applied"
 else
-    die "Unexpected response from set-radio-pref: $RESULT"
+    die "Unexpected response from set-radio-pref: $(_json_compact "$RESULT")"
 fi
 
 # --- Verify ---
 log "Verifying..."
-_tmpfile="$TMP_DIR/u5gmax-bandfix-$(date +%s%N)-verify.json"
-_ssh_out="$TMP_DIR/ssh_verify.txt"
-printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}\n' "$ICCID" > "$_tmpfile"
-_ssh_bg "$_ssh_out" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" < "$_tmpfile" || \
+VERIFY=$(_wwan_cmd "{\"method\":\"get-radio-pref\",\"params\":{\"iccid\":\"$ICCID\"}}") || \
     die "verify get-radio-pref failed"
-VERIFY=$(cat "$_ssh_out")
-rm -f "$_tmpfile" "$_ssh_out"
 REMAINING=$(check_compliance "$VERIFY")
 if [ -n "$REMAINING" ]; then
     die "Fix applied but config still non-compliant:$REMAINING"

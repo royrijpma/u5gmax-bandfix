@@ -186,9 +186,13 @@ msg ""
 
 # --- Prerequisite checks ---
 [ "$(id -u)" -eq 0 ] || die "Must run as root"
-command -v mongo   >/dev/null 2>&1 || die "mongo client not found"
 command -v ssh     >/dev/null 2>&1 || die "ssh not found"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
+
+# UniFi OS 6 / Network >= 10.6: the controller database is PostgreSQL — cluster
+# "apps", port 5434, database "unifi-network", schema "config" (was: MongoDB 27117/ace)
+su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc 'SELECT 1'" < /dev/null >/dev/null 2>&1 || \
+    die "UniFi Network database not reachable (psql as postgres user) — expected UniFi OS 6 / Network 10.6+"
 
 if ! command -v sshpass >/dev/null 2>&1; then
     warn "sshpass not found — attempting install..."
@@ -204,7 +208,7 @@ rm -f "$DATA_DIR/.write_test"
 validate_ip() {
     local ip="$1"
     echo "$ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || \
-        die "Invalid IP address from MongoDB: '$ip'"
+        die "Invalid IP address from the UniFi database: '$ip'"
 }
 
 # --- Validate SSH username helper ---
@@ -214,29 +218,32 @@ validate_ssh_user() {
         die "Invalid SSH username: '$user'"
 }
 
-# --- Retrieve SSH credentials from MongoDB ---
-msg "Reading SSH credentials from UniFi MongoDB..."
-SSH_USER=$(mongo --quiet localhost:27117/ace \
-    --eval "print(db.setting.findOne({key:'mgmt'}).x_ssh_username)" < /dev/null 2>/dev/null | tr -d '\r\n') || true
-SSH_PASS=$(mongo --quiet localhost:27117/ace \
-    --eval "print(db.setting.findOne({key:'mgmt'}).x_ssh_password)" < /dev/null 2>/dev/null | tr -d '\r\n') || true
+# --- Retrieve SSH credentials from the UniFi Network database ---
+msg "Reading SSH credentials from the UniFi Network database (PostgreSQL)..."
+SSH_USER=$(su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+    \"SELECT coalesce(dynamic_part->>'x_ssh_username','null') FROM config.setting WHERE key='mgmt'\"" \
+    < /dev/null 2>/dev/null | tr -d '\r\n') || true
+SSH_PASS=$(su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+    \"SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'\"" \
+    < /dev/null 2>/dev/null | tr -d '\r\n') || true
 
 [ -z "$SSH_USER" ] || [ "$SSH_USER" = "null" ] && \
-    die "Could not read SSH username from MongoDB. Is SSH enabled in UniFi Network?"
+    die "Could not read SSH username from the UniFi database. Is SSH enabled in UniFi Network?"
 [ -z "$SSH_PASS" ] || [ "$SSH_PASS" = "null" ] && \
-    die "Could not read SSH password from MongoDB"
+    die "Could not read SSH password from the UniFi database"
 
 # Validate SSH_USER
 validate_ssh_user "$SSH_USER"
 ok "SSH user: $SSH_USER"
 
 # --- Detect U5G-Max IP ---
-msg "Querying MongoDB for U5G-Max IP..."
-U5G_IP=$(mongo --quiet localhost:27117/ace \
-    --eval 'var d=db.device.findOne({model:/^UMBBE/}); print(d ? d.ip : "null")' < /dev/null 2>/dev/null | tr -d '\r\n') || true
+msg "Querying UniFi database for U5G-Max IP..."
+U5G_IP=$(su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+    \"SELECT coalesce((SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL ORDER BY last_seen DESC NULLS LAST LIMIT 1),'null')\"" \
+    < /dev/null 2>/dev/null | tr -d '\r\n') || true
 
 [ -z "$U5G_IP" ] || [ "$U5G_IP" = "null" ] && \
-    die "U5G-Max (UMBBE*) not found in MongoDB — is the modem adopted?"
+    die "U5G-Max (UMBBE*) not found in the UniFi database — is the modem adopted?"
 
 validate_ip "$U5G_IP"
 ok "U5G-Max IP: $U5G_IP"
@@ -283,6 +290,19 @@ else
         "${SSH_USER}@${U5G_IP}" < /dev/null 2>/dev/null || \
         die "ssh-copy-id failed — check password and connectivity to $U5G_IP"
 
+    # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys, not the
+    # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key in both
+    # locations (the extra file is ignored on older firmware).
+    _PUB=$(cut -d' ' -f1,2 "$SSH_KEY.pub")
+    sshpass -f "$_PASS_FILE" ssh \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$KNOWN_HOSTS" \
+        -o ConnectTimeout=10 \
+        "${SSH_USER}@${U5G_IP}" \
+        "mkdir -p /etc/dropbear && { grep -qxF '$_PUB' /etc/dropbear/authorized_keys 2>/dev/null || printf '%s\n' '$_PUB' >> /etc/dropbear/authorized_keys; }" \
+        < /dev/null 2>/dev/null || \
+        warn "Could not update /etc/dropbear/authorized_keys on modem — keyless login may fail"
+
     rm -f "$_PASS_FILE"; _PASS_FILE=""
 
     # Verify keyless SSH works
@@ -294,11 +314,11 @@ fi
 
 # --- Retrieve ICCID ---
 msg "Reading ICCID from U5G-Max SIM..."
-ICCID=$(printf '{"method":"get-sim-state"}' \
-    | ssh $SSH_STRICT_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" \
+ICCID=$(ssh $SSH_STRICT_OPTS "${SSH_USER}@${U5G_IP}" \
+    "ubus call uiwwand call '{\"method\":\"get-sim-state\"}'" < /dev/null 2>/dev/null \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result']['iccid'])" 2>/dev/null) || true
 
-[ -z "$ICCID" ] && die "Could not read ICCID — SIM initialized? Try again in 2 minutes."
+[ -z "$ICCID" ] && die "Could not read ICCID — SIM inserted and initialized? Try again in 2 minutes."
 
 # Validate ICCID: must be 18-20 digits
 echo "$ICCID" | grep -qE '^[0-9]{18,20}$' || die "Unexpected ICCID format: '$ICCID'"

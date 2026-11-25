@@ -120,11 +120,11 @@ Analyseer de volgende bash scripts van udm-bandfix — een tool die via SSH op e
 Context:
 - Draait als root op een UniFi Cloud Gateway
 - Verbindt via SSH (key-based) met de U5G-Max modem
-- Leest credentials (SSH user/password) uit een lokale MongoDB
+- Leest credentials (SSH user/password) uit de UniFi Network PostgreSQL-database
 - ICCID van de SIM wordt gecached in een config file
 
 Zoek naar:
-- Command injection risico's (variabelen in SSH commando's, mongo --eval, printf)
+- Command injection risico's (variabelen in SSH commando's, psql queries, printf)
 - Credential handling (wordt het SSH wachtwoord ooit gelogd of opgeslagen?)
 - SSH key beveiliging (permissions, StrictHostKeyChecking)
 - Privilege escalation (draait als root, welke aanvalsoppervlakken?)
@@ -157,7 +157,7 @@ Context: udm-bandfix — beheert LTE/NR5G bandinstellingen op een UniFi U5G-Max 
 Zoek naar:
 - Bash best practices: quoting, set -euo pipefail, shellcheck issues
 - Foutafhandeling: worden alle exit codes gecheckt?
-- Robuustheid: wat als mongo niet reageert, SSH faalt, uiwwand-ctl een onverwacht format teruggeeft?
+- Robuustheid: wat als psql/postgres niet reageert, SSH faalt, ubus een onverwacht format teruggeeft?
 - Portabiliteit: werkt het op BusyBox/ash als bash niet beschikbaar is?
 - Idempotentie: is het veilig om meerdere keren te draaien?
 - Hardcoded waarden die beter in de config zouden zitten
@@ -191,13 +191,13 @@ Analyseer de volgende scripts op:
 - Wat gebeurt er bij een reboot van de modem halverwege een fix?
 - Wat als de U5G-Max een andere firmware heeft die get-radio-pref anders formatteert?
 - Wat als de ICCID verandert (bijv. na SIM-swap)?
-- Wat als MongoDB tijdelijk down is?
+- Wat als de PostgreSQL-database tijdelijk down is?
 - Wat als de crontab verdwijnt na een firmware-update van de Cloud Gateway?
 - Wat als de SSH key op de modem verdwijnt (firmware-update wist /root/.ssh/)?
 - Wat als het /data/ volume vol raakt door logs?
 - Concurrency: twee cronjobs die tegelijk draaien?
 - Wat als sshpass niet beschikbaar is op de Cloud Gateway?
-- Wat als de MongoDB query 'null' teruggeeft (device niet adopted)?
+- Wat als de database-query 'null' teruggeeft (device niet adopted)?
 
 CODE:
 $ALL_CODE

@@ -81,21 +81,22 @@ if [ ! -f "$CLI_DEST" ]; then
     fi
 fi
 
-# Poll MongoDB until U5G-Max appears (max 10 min — modem may boot slower than gateway)
-# Uses tempfile instead of pipeline: mongo 3.6 hangs in pipelines without a TTY even
-# with < /dev/null, because it keeps its stdout-end of the pipe open indefinitely.
-log "Waiting for U5G-Max to appear in MongoDB..."
+# Poll the UniFi Network database until U5G-Max appears (max 10 min — modem may
+# boot slower than gateway). UniFi OS 6 / Network >= 10.6: PostgreSQL, cluster
+# "apps", port 5434, database "unifi-network", schema "config" (was: MongoDB 27117/ace).
+# Runs with the same bounded background+SIGKILL pattern as band-fix.sh.
+log "Waiting for U5G-Max to appear in the UniFi database..."
 _ip_out="$TMP_DIR/on-boot-ip.txt"
 i=1
 while [ $i -le 20 ]; do
     : > "$_ip_out"
-    mongo --quiet localhost:27117/ace \
-        --eval 'var d=db.device.findOne({model:"UMBBE630"}); print(d ? d.ip : "null")' \
-        < /dev/null > "$_ip_out" 2>/dev/null &
-    _mongo_pid=$!
-    ( sleep 30 && kill -9 "$_mongo_pid" 2>/dev/null ) &
+    printf '%s' "SELECT coalesce((SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL ORDER BY last_seen DESC NULLS LAST LIMIT 1),'null')" \
+        | su - postgres -c "PGCONNECT_TIMEOUT=10 PGOPTIONS='-c statement_timeout=10000' psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atf -" \
+        > "$_ip_out" 2>/dev/null &
+    _pg_pid=$!
+    ( sleep 30 && kill -9 "$_pg_pid" 2>/dev/null ) &
     _kpid=$!
-    wait "$_mongo_pid" 2>/dev/null || true
+    wait "$_pg_pid" 2>/dev/null || true
     kill "$_kpid" 2>/dev/null; wait "$_kpid" 2>/dev/null || true
     IP=$(tr -d '\r\n' < "$_ip_out")
     if [ -n "$IP" ] && [ "$IP" != "null" ] && printf '%s' "$IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
