@@ -18,8 +18,9 @@ echo ""
 if [ -f "$CONFIG" ] && [ -f "$SSH_KEY" ] && [ -f "$KNOWN_HOSTS" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG"
-    U5G_IP=$(mongo --quiet localhost:27117/ace \
-        --eval "print(db.device.findOne({model:'UMBBE630'}).ip)" 2>/dev/null | tr -d '\r\n') || true
+    U5G_IP=$(su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+        \"SELECT coalesce((SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL ORDER BY last_seen DESC NULLS LAST LIMIT 1),'null')\"" \
+        2>/dev/null | tr -d '\r\n') || true
 
     if [ -n "$U5G_IP" ] && [ "$U5G_IP" != "null" ] && \
        echo "$U5G_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then

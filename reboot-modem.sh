@@ -66,15 +66,16 @@ _ssh_bg() {
 log "Sending reboot command to U5G-Max at $U5G_IP..."
 _rout="$TMP_DIR/reboot-out.txt"
 
-# Try uiwwand-ctl {"method":"reboot"} first
-printf '{"method":"reboot"}\n' | _ssh_bg "$_rout" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "uiwwand-ctl" || true
+# U5G-Max firmware >= 8.0.4: control methods go via ubus (the uiwwand-ctl socket
+# protocol was removed). Try the ubus {"method":"reboot"} first.
+_ssh_bg "$_rout" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "ubus call uiwwand call '{\"method\":\"reboot\"}'" || true
 _resp=$(cat "$_rout" 2>/dev/null || echo "")
 
 if printf '%s' "$_resp" | grep -q '"result"'; then
-    log "Reboot command accepted via uiwwand-ctl"
+    log "Reboot command accepted via ubus"
 else
-    log "uiwwand-ctl reboot failed (response: ${_resp:-empty}) — trying SSH reboot..."
-    printf '' | _ssh_bg "$_rout" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "reboot" || true
+    log "ubus reboot failed (response: ${_resp:-empty}) — trying SSH reboot..."
+    _ssh_bg "$_rout" $SSH_OPTS "${SSH_USER}@${U5G_IP}" "reboot" || true
     log "SSH reboot command sent"
 fi
 rm -f "$_rout"

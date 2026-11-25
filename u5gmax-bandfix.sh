@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.5.3"
+VERSION="1.6.0"
 DATA_DIR="/data/u5gmax-bandfix"
 CONFIG="$DATA_DIR/config"
 SSH_KEY="$DATA_DIR/id_ed25519"
@@ -170,9 +170,12 @@ _resolve_band_profile() {
 [ -f "$CONFIG" ] && source "$CONFIG" || true
 _resolve_band_profile
 
+# UniFi OS 6 / Network >= 10.6: the controller database is PostgreSQL — cluster
+# "apps", port 5434, database "unifi-network", schema "config" (was: MongoDB 27117/ace)
 get_ip() {
-    timeout 30 mongo --quiet localhost:27117/ace \
-        --eval 'var d=db.device.findOne({model:/^UMBBE/}); print(d ? d.ip : "null")' < /dev/null 2>/dev/null | tr -d '\r\n' || echo ""
+    timeout 30 su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+        \"SELECT coalesce((SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL ORDER BY last_seen DESC NULLS LAST LIMIT 1),'null')\"" \
+        < /dev/null 2>/dev/null | tr -d '\r\n' || echo ""
 }
 
 get_last_run() {
@@ -315,10 +318,13 @@ refresh_signal_summary() {
         SIGNAL_SUMMARY="${R}modem offline${NC}"
         return
     fi
-    raw=$(printf '{"method":"get-radio-status"}' | timeout 8 ssh \
+    # U5G-Max firmware >= 8.0.4: control methods go via ubus (the uiwwand-ctl
+    # socket protocol was removed) — see band-fix.sh _wwan_cmd for details
+    raw=$(timeout 8 ssh \
         -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
         -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-        "${SSH_USER}@${ip}" uiwwand-ctl 2>/dev/null) || true
+        "${SSH_USER}@${ip}" "ubus call uiwwand call '{\"method\":\"get-radio-status\"}'" \
+        < /dev/null 2>/dev/null) || true
     if [ -z "$raw" ]; then
         SIGNAL_SUMMARY="${Y}unavailable${NC}"
         return
@@ -438,8 +444,8 @@ action_band_status() {
     _reinstall_ssh_key() {
         local _ip="$1"
         local _pass; _pass=$(. "$CONFIG" 2>/dev/null; printf '%s' "${SSH_PASS:-}")
-        [ -z "$_pass" ] && _pass=$(mongo --quiet localhost:27117/ace \
-            --eval 'var s=db.setting.findOne({key:"mgmt"}); print(s ? s.x_ssh_password : "null")' \
+        [ -z "$_pass" ] && _pass=$(su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+            \"SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'\"" \
             < /dev/null 2>/dev/null | tr -d '\r\n') || true
         [ -z "$_pass" ] || [ "$_pass" = "null" ] && return 1
         local _pf; _pf=$(mktemp /tmp/.cli-pw-XXXXXX)
@@ -452,6 +458,16 @@ action_band_status() {
             -o ConnectTimeout=10 \
             "${SSH_USER}@${_ip}" < /dev/null 2>/dev/null
         local _rc=$?
+        # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys, not the
+        # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key in both
+        _PUB=$(cut -d' ' -f1,2 "$SSH_KEY.pub")
+        timeout 20 sshpass -f "$_pf" ssh \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            -o ConnectTimeout=10 \
+            "${SSH_USER}@${_ip}" \
+            "mkdir -p /etc/dropbear && { grep -qxF '$_PUB' /etc/dropbear/authorized_keys 2>/dev/null || printf '%s\n' '$_PUB' >> /etc/dropbear/authorized_keys; }" \
+            < /dev/null 2>/dev/null || true
         rm -f "$_pf"
         return $_rc
     }
@@ -486,14 +502,15 @@ action_band_status() {
     fi
 
     # Get live ICCID
-    iccid=$(printf '{"method":"get-sim-state"}' \
-        | ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" "uiwwand-ctl" 2>/dev/null \
+    iccid=$(ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" \
+        "ubus call uiwwand call '{\"method\":\"get-sim-state\"}'" < /dev/null 2>/dev/null \
         | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result']['iccid'])" 2>/dev/null) || iccid="${ICCID_CACHE:-}"
 
     [ -z "$iccid" ] && { printf "${R}Could not read ICCID.${NC}\n"; pause; return; }
 
-    current=$(printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$iccid" \
-        | ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" "uiwwand-ctl" 2>/dev/null) || \
+    current=$(ssh $(ssh_opts) "${SSH_USER}@${u5g_ip}" \
+        "ubus call uiwwand call '{\"method\":\"get-radio-pref\",\"params\":{\"iccid\":\"$iccid\"}}'" \
+        < /dev/null 2>/dev/null) || \
         { printf "${R}Could not read band config from modem.${NC}\n"; pause; return; }
 
     printf "\n${W}ICCID:${NC} %s\n\n" "$iccid"
@@ -654,10 +671,11 @@ action_reinstall_key() {
     [ -z "$u5g_ip" ] || [ "$u5g_ip" = "null" ] && { printf "\n${R}U5G-Max not online.${NC}\n"; pause; return; }
 
     printf "\n${Y}Reinstalling SSH key on U5G-Max ($u5g_ip)...${NC}\n"
-    printf "Reading password from MongoDB...\n"
-    ssh_pass=$(timeout 30 mongo --quiet localhost:27117/ace \
-        --eval "print(db.setting.findOne({key:'mgmt'}).x_ssh_password)" < /dev/null 2>/dev/null | tr -d '\r\n') || true
-    [ -z "$ssh_pass" ] || [ "$ssh_pass" = "null" ] && { printf "${R}Could not read password from MongoDB.${NC}\n"; pause; return; }
+    printf "Reading password from the UniFi database...\n"
+    ssh_pass=$(timeout 30 su - postgres -c "psql -p 5434 -d unifi-network -v ON_ERROR_STOP=1 -Atc \
+        \"SELECT coalesce(dynamic_part->>'x_ssh_password','null') FROM config.setting WHERE key='mgmt'\"" \
+        < /dev/null 2>/dev/null | tr -d '\r\n') || true
+    [ -z "$ssh_pass" ] || [ "$ssh_pass" = "null" ] && { printf "${R}Could not read password from the UniFi database.${NC}\n"; pause; return; }
 
     # Re-scan host key (IP may have changed)
     ssh-keyscan -T 10 "$u5g_ip" > "$KNOWN_HOSTS" 2>/dev/null || true
@@ -674,6 +692,16 @@ action_reinstall_key() {
         "${SSH_USER}@${u5g_ip}" 2>/dev/null && \
         printf "${G}✓ SSH key reinstalled.${NC}\n" || \
         printf "${R}✗ Failed — check connectivity.${NC}\n"
+
+    # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys — install the key there too
+    _PUB=$(cut -d' ' -f1,2 "$SSH_KEY.pub")
+    timeout 20 sshpass -f "$_PASS_FILE" ssh \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$KNOWN_HOSTS" \
+        -o ConnectTimeout=10 \
+        "${SSH_USER}@${u5g_ip}" \
+        "mkdir -p /etc/dropbear && { grep -qxF '$_PUB' /etc/dropbear/authorized_keys 2>/dev/null || printf '%s\n' '$_PUB' >> /etc/dropbear/authorized_keys; }" \
+        < /dev/null 2>/dev/null || true
 
     rm -f "$_PASS_FILE"
     printf '%s\n' "$u5g_ip" > "$DATA_DIR/last_ip.txt"

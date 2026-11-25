@@ -12,6 +12,13 @@ The modem is detected automatically by searching for any `UMBBE*` model in Mongo
 
 ## Changelog
 
+### v1.6.0 (2026-11-25)
+- **UniFi OS 6 / Network 10.6+ port (UDM Pro Max)**: the controller moved its database from MongoDB (`localhost:27117/ace`) to **PostgreSQL** — cluster `apps`, port `5434`, database `unifi-network`, schema `config`. All lookups now go through `psql` as the postgres user: device IP from `config.device`, SSH credentials from `config.setting` (`key='mgmt'`, `dynamic_part->>'x_ssh_username'/'x_ssh_password'`).
+- **U5G-Max firmware 8.0.4+ modem control via ubus**: the old `echo <json> | uiwwand-ctl` socket protocol was removed (the daemon logs `ctl: Could not parse payload` and answers empty). The same JSON methods (`get-sim-state`, `get-radio-status`, `get-radio-pref`, `set-radio-pref`) are now sent over SSH as `ubus call uiwwand call '<json>'`. Response shape and field names are unchanged.
+- **Fix: SSH key install location on firmware 8.x** — dropbear now reads `/etc/dropbear/authorized_keys`, not the `~/.ssh/authorized_keys` that `ssh-copy-id` writes. The key is installed in both locations. Verified that authorized_keys is still **not persistent** across modem reboots on fw 8.x (the firmware recreates an empty `/etc/dropbear/authorized_keys` at boot); the self-heal path re-installs it via controller credentials and was verified end-to-end after a live modem reboot (~2 s). The key-install SSH call runs under a SIGKILL guard: dropbear during early boot can close the session and leave the client hanging in CLOSE-WAIT.
+- **Fix: every cron run was slowed by exactly one guard-timeout per helper call** (30 s database + 20 s per modem call): the background SIGKILL guards held the `$( )` substitution stdout pipe open until they expired. Guards are now detached from stdout.
+- Verified live on: UDM Pro Max (UniFi OS 6.0.17, Network 10.6.109) + U5G-Max (fw 8.0.4.19980, UMBBE630). Read paths, key install and ubus routing verified; the final `set-radio-pref` write + verify round-trip is pending a SIM being inserted.
+
 ### v1.5.3 (2026-10-20)
 - **Auto-fix: the `Signal:` line no longer stays "unavailable" for the whole menu session.** It was fetched once at startup and cached, so a menu opened before the SSH key was restored kept showing "unavailable" although the modem worked. A failed fetch is now retried on every menu redraw (at most once per 30 s, only while failing), the summary is refetched after "Force band check", "Switch ISP profile", "Reinstall SSH key" and "Schedule reboot", and the menu follows a `SSH_USER` that `band-fix.sh` rewrote in the config.
 
@@ -115,9 +122,9 @@ Sometimes the U5G-Max gets stuck on 3G (WCDMA/UMTS) even when 4G/5G coverage is 
 
 u5gmax-bandfix runs as a cron job **on the Cloud Gateway** (not on the modem). Every hour it:
 
-1. Looks up the current U5G-Max IP in the UniFi MongoDB database (the IP is a dynamic public 5G WAN address that changes on reboot)
+1. Looks up the current U5G-Max IP in the UniFi Network PostgreSQL database (the IP is a dynamic public 5G WAN address that changes on reboot)
 2. Connects over SSH using a persistent key pair stored in `/data/`
-3. Reads the current band config via `uiwwand-ctl`
+3. Reads the current band config via `ubus call uiwwand call` (firmware 8.x; older firmware: `uiwwand-ctl`)
 4. Compares it against the ISP profile spec stored in config
 5. If it doesn't match → applies the correct configuration
 6. Verifies the result and logs everything to `/data/u5gmax-bandfix/band-fix.log`
@@ -134,19 +141,21 @@ Cloud Gateway (/data/ persistent)
          ▼
 U5G-Max (any UMBBE* model — auto-detected)
 │
-└── uiwwand-ctl        Band configuration tool
+└── ubus → uiwwand     Band configuration (daemon method dispatcher)
 ```
 
-The ICCID of the active SIM is required by `uiwwand-ctl set-radio-pref`. It's read live from the modem on every run and cached in config as a fallback.
+The ICCID of the active SIM is required by `set-radio-pref`. It's read live from the modem on every run and cached in config as a fallback.
 
 ## Tested Environment
 
 | Component | Version |
 |-----------|---------|
-| Cloud Gateway Fiber firmware | v5.1.19 |
-| U5G-Max firmware | 7.4.1.19032 |
-| UniFi Network | 10.4.57 |
+| Gateway | UDM Pro Max, UniFi OS 6.0.17 |
+| UniFi Network | 10.6.109 (PostgreSQL database mode) |
+| U5G-Max firmware | 8.0.4.19980 (model UMBBE630) |
 | ISP | Odido 5G Internet (FWA, NL) |
+
+Earlier testing (v1.0 – v1.5): Cloud Gateway Fiber (UniFi OS 5.1.19), UniFi Network 10.4.57 (MongoDB mode), U5G-Max fw 7.4.1.19032.
 
 ## Requirements
 
@@ -277,12 +286,13 @@ tail -f /data/u5gmax-bandfix/band-fix.log
 ### Verify band configuration on the modem
 
 ```bash
-# From the Cloud Gateway
-ICCID=$(grep ICCID_CACHE /data/u5gmax-bandfix/config | cut -d'"' -f2)
-U5G_IP=$(mongo --quiet localhost:27117/ace --eval 'var d=db.device.findOne({model:/^UMBBE/}); print(d ? d.ip : "null")')
-SSH_USER=$(grep SSH_USER /data/u5gmax-bandfix/config | cut -d'"' -f2)
-printf '{"method":"get-radio-pref","params":{"iccid":"%s"}}' "$ICCID" \
-  | ssh -i /data/u5gmax-bandfix/id_ed25519 "${SSH_USER}@${U5G_IP}" uiwwand-ctl
+# From the Cloud Gateway (UniFi OS 6 / Network 10.6+: PostgreSQL, cluster "apps")
+U5G_IP=$(su - postgres -c "psql -p 5434 -d unifi-network -Atc \"SELECT ip FROM config.device WHERE model LIKE 'UMBBE%' AND ip IS NOT NULL LIMIT 1\"")
+SSH_USER=$(su - postgres -c "psql -p 5434 -d unifi-network -Atc \"SELECT dynamic_part->>'x_ssh_username' FROM config.setting WHERE key='mgmt'\"")
+ssh -i /data/u5gmax-bandfix/id_ed25519 \
+    -o UserKnownHostsFile=/data/u5gmax-bandfix/known_hosts \
+    "${SSH_USER}@${U5G_IP}" \
+    "ubus call uiwwand call '{\"method\":\"get-radio-pref\",\"params\":{}}'"
 ```
 
 Expected output (Odido NL-compliant):
@@ -302,7 +312,7 @@ This removes the cron job, all files in `/data/u5gmax-bandfix/`, and the SSH key
 ## Security
 
 - SSH uses ed25519 key-based auth only — no passwords used after install
-- The MongoDB SSH password is cached in `/data/u5gmax-bandfix/config` (mode `600`, root-only) to enable self-healing after modem reboots without requiring MongoDB access
+- The UniFi database (PostgreSQL) SSH password is cached in `/data/u5gmax-bandfix/config` (mode `600`, root-only) to enable self-healing after modem reboots without requiring database access
 - All files in `/data/u5gmax-bandfix/` are root-only (chmod 600 for config and key)
 - The fix only runs read/write over SSH — no arbitrary code execution on the modem
 - All external input (SSH_USER from MongoDB, IP, ICCID) is strictly validated with regex before use — e.g., `SSH_USER` must match `^[a-zA-Z0-9_-]{1,32}$` or the script aborts
