@@ -257,16 +257,20 @@ _reinstall_key() {
     local _sckpid=$!
     { wait "$_scpid" 2>/dev/null; } || _rc=$?
     kill "$_sckpid" 2>/dev/null; wait "$_sckpid" 2>/dev/null || true
-    rm -f "$_pf"
 
     if [ $_rc -ne 0 ]; then
+        rm -f "$_pf"
         log "ssh-copy-id failed (rc=$_rc) — wrong password or sshd configuration changed"
         return 1
     fi
 
     # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys, not the
-    # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key in both
-    # locations (the extra file is ignored on older firmware).
+    # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key there too.
+    # Password auth (keyless does not work until this very step). Backgrounded
+    # with SIGKILL guard: dropbear during early boot can close the session and
+    # leave the client hanging in CLOSE-WAIT (observed live); ConnectTimeout
+    # only bounds the TCP connect, not the session. If this fails (e.g. modem
+    # still booting) the next hourly run retries.
     _PUB=$(cut -d' ' -f1,2 "${SSH_KEY}.pub")
     sshpass -f "$_pf" ssh \
         -o StrictHostKeyChecking=yes \
@@ -274,8 +278,16 @@ _reinstall_key() {
         -o ConnectTimeout=10 \
         "${SSH_USER}@${_ip}" \
         "mkdir -p /etc/dropbear && { grep -qxF '$_PUB' /etc/dropbear/authorized_keys 2>/dev/null || printf '%s\n' '$_PUB' >> /etc/dropbear/authorized_keys; }" \
-        < /dev/null > /dev/null 2>&1 || \
+        < /dev/null > /dev/null 2>&1 &
+    local _dbpid=$!
+    ( sleep 20 && kill -9 "$_dbpid" 2>/dev/null ) > /dev/null 2>&1 &
+    local _dbkpid=$!
+    { wait "$_dbpid" 2>/dev/null; } || _rc=$?
+    kill "$_dbkpid" 2>/dev/null; wait "$_dbkpid" 2>/dev/null || true
+    rm -f "$_pf"
+    if [ $_rc -ne 0 ]; then
         log "WARNING: could not update /etc/dropbear/authorized_keys on modem"
+    fi
 
     log "SSH key reinstalled on $_ip"
     return 0

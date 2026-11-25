@@ -461,7 +461,7 @@ action_band_status() {
         # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys, not the
         # ~/.ssh/authorized_keys that ssh-copy-id writes — install the key in both
         _PUB=$(cut -d' ' -f1,2 "$SSH_KEY.pub")
-        sshpass -f "$_pf" ssh \
+        timeout 20 sshpass -f "$_pf" ssh \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$KNOWN_HOSTS" \
             -o ConnectTimeout=10 \
@@ -695,7 +695,7 @@ action_reinstall_key() {
 
     # Firmware >= 8.0.4: dropbear reads /etc/dropbear/authorized_keys — install the key there too
     _PUB=$(cut -d' ' -f1,2 "$SSH_KEY.pub")
-    sshpass -f "$_PASS_FILE" ssh \
+    timeout 20 sshpass -f "$_PASS_FILE" ssh \
         -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile="$KNOWN_HOSTS" \
         -o ConnectTimeout=10 \
