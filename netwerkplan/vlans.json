@@ -1,0 +1,36 @@
+{
+  "wifi": {
+    "omschrijving": "Events WiFi large",
+    "vlans": [
+      70,
+      71,
+      40,
+      41
+    ]
+  },
+  "registratie": {
+    "omschrijving": "Events vaste lijn / WiFi (registratie)",
+    "vlans": [
+      44
+    ],
+    "gedeeld": true
+  },
+  "speaker": {
+    "omschrijving": "Events vaste lijn (speaker ready netwerk)",
+    "vlans": [
+      61
+    ],
+    "gedeeld": true
+  },
+  "vaste_lijn": {
+    "omschrijving": "Events vaste lijnen",
+    "vlans": [
+      62,
+      64,
+      72,
+      73,
+      74,
+      75
+    ]
+  }
+}

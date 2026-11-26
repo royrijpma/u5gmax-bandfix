@@ -1,0 +1,34 @@
+{
+  "naam": "Hybrid Global Forum on GU Oncology 2026",
+  "referentie": "TP/6105/AV",
+  "datum": "30 Nov t/m 5 Dec",
+  "pax": 300,
+  "it_lead": "Harry / Roy / Ashvin / Saeid",
+  "opbouw": "Roy / Ashvin",
+  "afbouw": "Roy / Ashvin",
+  "wan_wifi": 2,
+  "wan_registratie": 1,
+  "wifi": {"ssid": "...", "wachtwoord": "...", "vlan": "auto", "dekking": "#1event #bg #tentoonstelling #toilet", "lease": "1 Day / 1 Week (3 dagen of meer)"},
+  "registratie_wifi": {"ssid": "...", "wachtwoord": "...", "vlan": 44, "dekking": "#bf"},
+  "afspraken": [
+    "1x WiFi - Alle zalen (Included)",
+    "1x Speaker Service Centre - (Included)",
+    "1x Streamlijn - Maquette Ruimte - Editor (Aparte VLAN)",
+    "1x Streamlijn - Effectenbeurszaal - Zoom - FOH (Aparte VLAN)",
+    "1x Streamlijn - Effectenbeurszaal - Slido - FOH (Aparte VLAN)",
+    "1x Streamlijn - Effectenbeurszaal - Vimeo Livestream Upload - FOH (Aparte VLAN)"
+  ],
+  "planning": {
+    "Ma 30 Nov": ["Pre-opbouw", "Alles klaar aan het eind van de dag op verzoek van Lucas + Frank."],
+    "Di 1 Dec": ["Opbouw", ""],
+    "Wo 2 Dec": ["Event", ""],
+    "Do 3 Dec": ["Event", ""],
+    "Vr 4 Dec": ["Event", ""],
+    "Za 5 Dec": ["Event + Afbouw", ""]
+  },
+  "lijnen": [
+    {"zaal": "Effectenbeurszaal", "titel": "Vaste Lijn #1 - FOH Main laptop", "uitlaat": "EFBZ-6", "poort": 0, "vlan": "auto", "pool": "speaker", "wan": "..."},
+    {"zaal": "Effectenbeurszaal", "titel": "Vaste Lijn #2 - FOH Backup laptop", "uitlaat": "EFBZ-6", "poort": 1, "vlan": "auto", "pool": "speaker", "wan": "..."}
+  ],
+  "afbouw_checklist": ["..."]
+}

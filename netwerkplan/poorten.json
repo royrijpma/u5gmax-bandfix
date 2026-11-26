@@ -1,0 +1,98 @@
+{
+  "Administratiezaal": [
+    {"id": "ADM-1", "poorten": ["sw28p4"], "notitie": "Patchkast"},
+    {"id": "ADM-2", "poorten": ["sw28p7"], "notitie": ""}
+  ],
+  "Backbone": [
+    {"id": "BB-1", "poorten": ["sw131p7"], "notitie": "Ampco / CT AV opslag (zelfde lijn als Put Grote Zaal)"},
+    {"id": "BB-2", "poorten": ["sw131p5"], "notitie": "BvB AV opslag (zelfde lijn als Put Grote Zaal)"},
+    {"id": "BB-3", "poorten": ["sw131p9"], "notitie": "(zelfde lijn als Put Grote Zaal)"}
+  ],
+  "Berlage Zaal": [
+    {"id": "BER-1", "poorten": ["sw155p3"], "notitie": "Berlage Zaal, noordwand"},
+    {"id": "BER-2", "poorten": ["sw32p14", "sw32p15"], "notitie": "Berlage Zaal, zuidoosthoek"},
+    {"id": "BER-3", "poorten": ["sw32p17"], "notitie": "Ontvangstkamer 1.038"}
+  ],
+  "Beursfoyer": [
+    {"id": "BF-1", "poorten": ["sw132p22"], "notitie": "Narrowcasting, noordwest"},
+    {"id": "BF-2", "poorten": ["sw131p20", "sw131p21"], "notitie": "Noordwand midden"},
+    {"id": "BF-3", "poorten": ["sw132p21"], "notitie": "Narrowcasting, noordoost"},
+    {"id": "BF-4", "poorten": ["sw131p15"], "notitie": "Narrowcasting, portaal west"},
+    {"id": "BF-5", "poorten": ["sw140p9", "sw140p11"], "notitie": "Zuidwand, bij garderobe"},
+    {"id": "BF-6", "poorten": ["sw140p7", "sw140p8"], "notitie": "Garderobe"},
+    {"id": "BF-7", "poorten": ["sw141p7"], "notitie": "Garderobe, westwand"}
+  ],
+  "Breakouts": [
+    {"id": "BRK-1", "poorten": ["sw41p2"], "notitie": ""},
+    {"id": "BRK-2", "poorten": ["sw41p3"], "notitie": ""},
+    {"id": "BRK-3", "poorten": ["sw41p9"], "notitie": ""},
+    {"id": "BRK-4", "poorten": ["sw41p4"], "notitie": ""},
+    {"id": "BRK-5", "poorten": ["sw41p6"], "notitie": ""},
+    {"id": "BRK-6", "poorten": ["sw42p2"], "notitie": ""},
+    {"id": "BRK-7", "poorten": ["sw42p3"], "notitie": ""},
+    {"id": "BRK-8", "poorten": ["sw42p4"], "notitie": ""},
+    {"id": "BRK-9", "poorten": ["sw42p6"], "notitie": ""},
+    {"id": "BRK-10", "poorten": ["sw43p2"], "notitie": ""},
+    {"id": "BRK-11", "poorten": ["sw43p3"], "notitie": ""},
+    {"id": "BRK-12", "poorten": ["sw43p4"], "notitie": ""},
+    {"id": "BRK-13", "poorten": ["sw44p2"], "notitie": ""},
+    {"id": "BRK-14", "poorten": ["sw44p3"], "notitie": ""},
+    {"id": "BRK-15", "poorten": ["sw44p4"], "notitie": ""},
+    {"id": "BRK-16", "poorten": ["sw44p6"], "notitie": ""},
+    {"id": "BRK-17", "poorten": ["sw44p10"], "notitie": ""},
+    {"id": "BRK-18", "poorten": ["sw155p17"], "notitie": ""}
+  ],
+  "Effectenbeurszaal": [
+    {"id": "EFBZ-1", "poorten": ["sw130p45", "sw130p20"], "notitie": "Noordwand"},
+    {"id": "EFBZ-2", "poorten": ["sw130p6"], "notitie": "Oostwand"},
+    {"id": "EFBZ-3", "poorten": ["sw130p21", "sw130p22"], "notitie": "Oostwand"},
+    {"id": "EFBZ-4", "poorten": ["sw130p44", "sw130p19"], "notitie": "Westwand"},
+    {"id": "EFBZ-5", "poorten": ["sw130p7"], "notitie": "Glasvezel GZ -> EFBZ"},
+    {"id": "EFBZ-6", "poorten": ["sw130p46", "sw131p18"], "notitie": "Zuidwand"}
+  ],
+  "Executive Lounge": [
+    {"id": "EL-1", "poorten": ["sw135p1", "sw135p2"], "notitie": ""},
+    {"id": "EL-2", "poorten": ["sw135p3", "sw135p4"], "notitie": ""},
+    {"id": "EL-3", "poorten": ["sw135p5", "sw135p6"], "notitie": ""},
+    {"id": "EL-4", "poorten": ["sw135p7"], "notitie": ""},
+    {"id": "EL-5", "poorten": ["sw135p8", "sw135p9"], "notitie": ""},
+    {"id": "EL-6", "poorten": ["sw135p11"], "notitie": ""}
+  ],
+  "Graanbeurszaal": [
+    {"id": "GBZ-1", "poorten": ["sw132p10"], "notitie": ""},
+    {"id": "GBZ-2", "poorten": ["sw132p7", "sw132p8"], "notitie": ""},
+    {"id": "GBZ-3", "poorten": ["sw131p16", "sw131p17"], "notitie": ""},
+    {"id": "GBZ-4", "poorten": ["sw141p14"], "notitie": ""},
+    {"id": "GBZ-5", "poorten": ["sw132p11", "sw132p12"], "notitie": ""},
+    {"id": "GBZ-6", "poorten": ["sw132p19"], "notitie": ""}
+  ],
+  "Grote Zaal": [
+    {"id": "GZ-1", "poorten": ["sw110p13", "sw111p23"], "notitie": "Noordwand"},
+    {"id": "GZ-2", "poorten": ["sw141p22", "sw141p23"], "notitie": "Westwand"},
+    {"id": "GZ-3", "poorten": ["sw110p8"], "notitie": "Noord, midden"},
+    {"id": "GZ-4", "poorten": ["sw110p24", "sw111p16"], "notitie": "Noord, oost"},
+    {"id": "GZ-5", "poorten": ["sw111p24"], "notitie": "Kast"},
+    {"id": "GZ-6", "poorten": ["sw131p7"], "notitie": "Put 1"},
+    {"id": "GZ-7", "poorten": ["sw131p5"], "notitie": "Put 2"},
+    {"id": "GZ-8", "poorten": ["sw131p9"], "notitie": "Put 3"},
+    {"id": "GZ-9", "poorten": ["sw32p16"], "notitie": "Oostwand"},
+    {"id": "GZ-10", "poorten": ["sw122p7"], "notitie": "Narrowcasting"},
+    {"id": "GZ-11", "poorten": ["sw120p24", "sw122p16"], "notitie": "Zuid, west"},
+    {"id": "GZ-12", "poorten": ["sw32p18"], "notitie": "Zuid"},
+    {"id": "GZ-13", "poorten": ["sw32p19"], "notitie": "Zuid"},
+    {"id": "GZ-14", "poorten": ["sw120p23", "sw122p18"], "notitie": "Zuid, oost"},
+    {"id": "GZ-15", "poorten": ["sw122p16"], "notitie": "Zuidwand midden"}
+  ],
+  "Keurzaal": [
+    {"id": "KZ-1", "poorten": ["sw130p8"], "notitie": "Patchkast"},
+    {"id": "KZ-2", "poorten": ["sw130p47", "sw131p19"], "notitie": ""}
+  ],
+  "Tooropzaal": [
+    {"id": "TZ-1", "poorten": ["sw131p6"], "notitie": ""}
+  ],
+  "Veilingzaal": [
+    {"id": "VZ-1", "poorten": ["sw127p4"], "notitie": "Kabel"},
+    {"id": "VZ-2", "poorten": ["sw127"], "notitie": "Switch in zaal (poort onbekend)"},
+    {"id": "VZ-3", "poorten": ["sw26"], "notitie": "Switch (poort onbekend)"}
+  ]
+}
